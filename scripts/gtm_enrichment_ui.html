@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GTM Enrichment Engine</title>
+<style>
+  /* ── THEME VARIABLES ── */
+  :root {
+    --bg: #0a0a0f; --surface: #12121a; --surface2: #1a1a26; --surface3: #22222e;
+    --border: #2a2a3a; --text: #e0e0e8; --text2: #8888a0; --text3: #555568;
+    --accent: #6c5ce7; --accent2: #a29bfe; --green: #00b894; --green2: #55efc4;
+    --orange: #fdcb6e; --red: #ff6b6b; --blue: #74b9ff; --pink: #fd79a8;
+  }
+
+  [data-theme="light"] {
+    --bg: #f5f6fa; --surface: #ffffff; --surface2: #eef0f5; --surface3: #e4e7ed;
+    --border: #d1d5db; --text: #1a1a2e; --text2: #555577; --text3: #8888a0;
+    --accent: #6c5ce7; --accent2: #5a4bd1; --green: #00a884; --green2: #00d4a4;
+    --orange: #e67e22; --red: #e74c3c; --blue: #3498db; --pink: #e84393;
+  }
+
+  [data-theme="ocean"] {
+    --bg: #0b1929; --surface: #0f2137; --surface2: #132d4a; --surface3: #17395d;
+    --border: #1e4976; --text: #ccd6e0; --text2: #7fa3c7; --text3: #4a7ba8;
+    --accent: #48dbfb; --accent2: #0abde3; --green: #10ac84; --green2: #1dd1a1;
+    --orange: #feca57; --red: #ff6b6b; --blue: #54a0ff; --pink: #f368e0;
+  }
+
+  [data-theme="forest"] {
+    --bg: #0a100d; --surface: #121a15; --surface2: #1a2620; --surface3: #22322a;
+    --border: #2d4a36; --text: #d0e8d8; --text2: #7fa88a; --text3: #4d7a58;
+    --accent: #00b894; --accent2: #55efc4; --green: #00b894; --green2: #55efc4;
+    --orange: #fdcb6e; --red: #ff6b6b; --blue: #74b9ff; --pink: #fd79a8;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg); color: var(--text);
+    height: 100vh; overflow: hidden;
+  }
+
+  /* ── LAYOUT ── */
+  .app { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
+
+  .header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 10px 20px; display: flex; align-items: center; gap: 12px;
+  }
+  .header h1 { font-size: 14px; font-weight: 700; color: var(--accent); letter-spacing: 0.5px; }
+  .header .stats { font-size: 11px; color: var(--text2); flex: 1; text-align: center; }
+
+  /* Theme switcher */
+  .theme-pills { display: flex; gap: 4px; }
+  .theme-pill {
+    width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--border);
+    cursor: pointer; transition: all 0.2s; position: relative;
+  }
+  .theme-pill:hover { transform: scale(1.15); }
+  .theme-pill.active { border-color: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .theme-pill[data-t="dark"]   { background: linear-gradient(135deg, #0a0a0f, #2a2a3a); }
+  .theme-pill[data-t="light"]  { background: linear-gradient(135deg, #f5f6fa, #d1d5db); }
+  .theme-pill[data-t="ocean"]  { background: linear-gradient(135deg, #0b1929, #1e4976); }
+  .theme-pill[data-t="forest"] { background: linear-gradient(135deg, #0a100d, #2d4a36); }
+
+  .main { display: grid; grid-template-columns: 1fr 440px; overflow: hidden; }
+
+  /* ── TABLE PANEL ── */
+  .table-panel { overflow: auto; border-right: 1px solid var(--border); scroll-behavior: smooth; }
+  .table-panel::-webkit-scrollbar { width: 8px; height: 8px; }
+  .table-panel::-webkit-scrollbar-track { background: var(--bg); }
+  .table-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  .table-panel::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+  .table-panel table { border-collapse: collapse; font-size: 11px; width: max-content; min-width: 100%; }
+  .table-panel thead { position: sticky; top: 0; z-index: 10; }
+  .table-panel th {
+    background: var(--surface2); color: var(--accent); font-weight: 600;
+    padding: 10px 14px; text-align: left; border-bottom: 2px solid var(--accent);
+    white-space: nowrap; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+    position: sticky; top: 0;
+  }
+  .table-panel td {
+    padding: 7px 14px; border-bottom: 1px solid var(--border);
+    max-width: 260px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-size: 11px; color: var(--text); transition: background 0.15s;
+  }
+  .table-panel tbody tr:hover td { background: var(--surface2); }
+  .table-panel td.row-idx {
+    cursor: pointer; color: var(--accent); font-size: 10px;
+    font-weight: 600; min-width: 40px; text-align: center;
+  }
+  .table-panel td.row-idx:hover { background: var(--accent); color: white; border-radius: 2px; }
+
+  /* New column styling */
+  .table-panel th.nc { background: var(--accent); color: white; }
+  .table-panel td.nc { border-left: 2px solid var(--accent); font-weight: 600; }
+  .table-panel td.nc-pending { color: var(--text3); font-style: italic; }
+  .table-panel td.nc-run { color: var(--orange); background: rgba(253,203,110,0.04); }
+  .table-panel td.nc-ok { color: var(--green); background: rgba(0,184,148,0.05); }
+  .table-panel td.nc-err { color: var(--red); background: rgba(255,107,107,0.05); }
+
+  /* ── CONTROL PANEL ── */
+  .control-panel {
+    display: flex; flex-direction: column; background: var(--surface);
+    overflow-y: auto; scroll-behavior: smooth;
+  }
+  .control-panel::-webkit-scrollbar { width: 6px; }
+  .control-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .section { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .stitle {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--accent); margin-bottom: 8px; font-weight: 700;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .stitle .num {
+    background: var(--accent); color: white; width: 18px; height: 18px;
+    border-radius: 50%; display: inline-flex; align-items: center;
+    justify-content: center; font-size: 9px;
+  }
+
+  /* Inputs */
+  input[type="text"], input[type="password"], textarea, select {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 9px 12px; color: var(--text);
+    font-family: inherit; font-size: 12px; outline: none; transition: border-color 0.2s;
+  }
+  input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(108,92,231,0.15); }
+  textarea { resize: vertical; min-height: 65px; line-height: 1.5; }
+  label { display: block; font-size: 11px; color: var(--text2); margin: 8px 0 4px; }
+
+  /* Upload */
+  .upload-zone {
+    border: 2px dashed var(--border); border-radius: 8px; padding: 16px;
+    text-align: center; cursor: pointer; transition: all 0.2s;
+    color: var(--text2); font-size: 12px;
+  }
+  .upload-zone:hover { border-color: var(--accent); color: var(--accent); }
+  .upload-zone.ok { border-color: var(--green); color: var(--green); border-style: solid; }
+
+  /* Feature chips */
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .chip {
+    font-size: 10px; padding: 4px 10px; border-radius: 12px;
+    background: var(--bg); border: 1px solid var(--border);
+    cursor: pointer; transition: all 0.15s; color: var(--text2); user-select: none;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .chip.on { background: rgba(108,92,231,0.15); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+
+  /* Prompt editor */
+  .prompt-box {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    font-size: 11px; line-height: 1.6; overflow-y: auto; color: var(--text2);
+    position: relative;
+  }
+  .prompt-display { padding: 10px; max-height: 180px; overflow-y: auto; white-space: pre-wrap; }
+  .prompt-display .hl-sys { color: var(--blue); }
+  .prompt-display .hl-val { color: var(--green); }
+  .prompt-display .hl-q { color: var(--orange); font-weight: 600; }
+  .prompt-edit {
+    width: 100%; min-height: 160px; background: transparent; border: none;
+    color: var(--text); font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 11px; padding: 10px; outline: none; resize: vertical; line-height: 1.6;
+  }
+  .prompt-toggle {
+    position: absolute; top: 6px; right: 6px; font-size: 9px;
+    padding: 3px 8px; border-radius: 4px; background: var(--surface2);
+    border: 1px solid var(--border); color: var(--text2); cursor: pointer;
+  }
+  .prompt-toggle:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Buttons */
+  .btn {
+    width: 100%; padding: 11px; border: none; border-radius: 8px;
+    font-family: inherit; font-size: 12px; font-weight: 700;
+    cursor: pointer; transition: all 0.2s; letter-spacing: 0.5px;
+  }
+  .btn-go { background: linear-gradient(135deg, var(--accent), var(--blue)); color: white; margin-top: 10px; }
+  .btn-go:hover { opacity: 0.9; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(108,92,231,0.3); }
+  .btn-go:disabled { opacity: 0.35; cursor: not-allowed; transform: none; box-shadow: none; }
+  .btn-stop { background: var(--red); color: white; margin-top: 8px; }
+  .btn-dl { background: linear-gradient(135deg, var(--green), var(--green2)); color: #0a0a0f; margin-top: 8px; }
+  .btn-dl:hover { opacity: 0.9; }
+
+  /* Progress */
+  .pbar { height: 6px; background: var(--bg); border-radius: 3px; margin-top: 10px; overflow: hidden; }
+  .pfill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--green)); transition: width 0.3s; border-radius: 3px; }
+  .pstats { display: flex; justify-content: space-between; font-size: 10px; color: var(--text2); margin-top: 6px; }
+
+  /* Coffee message */
+  .coffee-msg {
+    margin-top: 10px; padding: 10px 12px; border-radius: 8px;
+    background: var(--surface2); border: 1px solid var(--border);
+    font-size: 11px; color: var(--text2); line-height: 1.5; text-align: center;
+  }
+  .coffee-msg .emoji { font-size: 20px; display: block; margin-bottom: 4px; }
+  .coffee-msg .time-est { color: var(--orange); font-weight: 700; font-size: 13px; }
+  .coffee-msg .done-msg { color: var(--green); }
+
+  /* Empty state */
+  .empty {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%; color: var(--text3); font-size: 13px; text-align: center;
+    padding: 40px; gap: 12px;
+  }
+  .empty svg { width: 48px; height: 48px; opacity: 0.3; }
+</style>
+</head>
+<body data-theme="dark">
+
+<div class="app">
+  <!-- HEADER -->
+  <div class="header">
+    <h1>GTM Enrichment Engine</h1>
+    <div class="stats" id="hdr-stats"></div>
+    <div class="theme-pills">
+      <div class="theme-pill active" data-t="dark" title="Dark"></div>
+      <div class="theme-pill" data-t="light" title="Light"></div>
+      <div class="theme-pill" data-t="ocean" title="Ocean"></div>
+      <div class="theme-pill" data-t="forest" title="Forest"></div>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+    <!-- LEFT: TABLE -->
+    <div class="table-panel" id="table-panel">
+      <div class="empty" id="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7h18M3 12h18M3 17h18"/></svg>
+        Upload a CSV to see your data here.<br>
+        <span style="font-size:11px;color:var(--text3)">Everything stays in your browser. Only API calls go to OpenAI.</span>
+      </div>
+    </div>
+
+    <!-- RIGHT: CONTROLS -->
+    <div class="control-panel">
+      <!-- 1. UPLOAD -->
+      <div class="section">
+        <div class="stitle"><span class="num">1</span> LOAD DATA</div>
+        <div class="upload-zone" id="upload-zone">Drop CSV here or click to upload</div>
+        <input type="file" id="file-input" accept=".csv" style="display:none">
+      </div>
+
+      <!-- 2. FEATURES -->
+      <div class="section">
+        <div class="stitle"><span class="num">2</span> SELECT FEATURES</div>
+        <div style="font-size:10px;color:var(--text3);margin-bottom:6px">Pick columns to inject into each prompt</div>
+        <div class="chips" id="chips-container"></div>
+      </div>
+
+      <!-- 3. QUESTION -->
+      <div class="section">
+        <div class="stitle"><span class="num">3</span> YOUR QUESTION</div>
+        <textarea id="q-input" placeholder="e.g. Is this firm into Higher Education or School Education? Answer exactly: Higher Education, School Education, Both, or Unknown."></textarea>
+        <label>New Column Name</label>
+        <input type="text" id="col-input" value="AI_Answer">
+      </div>
+
+      <!-- 4. PROMPT PREVIEW -->
+      <div class="section">
+        <div class="stitle"><span class="num">4</span> PROMPT PREVIEW <span id="preview-row-label" style="color:var(--text3);font-weight:400;text-transform:none"> — click any row # to preview</span></div>
+        <div class="prompt-box" id="prompt-box">
+          <div class="prompt-toggle" id="prompt-toggle">Edit</div>
+          <div class="prompt-display" id="prompt-display">
+            <span style="color:var(--text3)">Select features and type a question to see the prompt</span>
+          </div>
+          <textarea class="prompt-edit" id="prompt-edit" style="display:none"></textarea>
+        </div>
+      </div>
+
+      <!-- 5. WEB CRAWL -->
+      <div class="section">
+        <div class="stitle"><span class="num">5</span> WEB CRAWL <span style="color:var(--text3);font-weight:400;text-transform:none">— optional</span></div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0">
+          <input type="checkbox" id="crawl-toggle" style="width:auto">
+          <span style="font-size:11px;color:var(--text)">Fetch website content & inject into prompts</span>
+        </label>
+        <div id="crawl-info" style="display:none;margin-top:8px;font-size:10px;color:var(--text2)">
+          URL column: <span id="url-col-name" style="color:var(--accent);font-weight:600">auto-detecting...</span>
+          <br>LinkedIn URLs are auto-skipped. Each domain is crawled once (cached).
+        </div>
+      </div>
+
+      <!-- 6. RUN -->
+      <div class="section" id="run-section">
+        <div class="stitle"><span class="num">6</span> RUN ENRICHMENT</div>
+        <label>API Provider</label>
+        <div style="display:flex;gap:4px;margin-bottom:8px">
+          <div class="chip on" data-api="openai" style="flex:1;text-align:center;padding:6px">OpenAI</div>
+          <div class="chip" data-api="anthropic" style="flex:1;text-align:center;padding:6px">Anthropic Claude</div>
+        </div>
+        <label>API Key <span id="api-key-hint" style="color:var(--text3);font-weight:400">(sk-...)</span></label>
+        <input type="password" id="api-input" placeholder="sk-...">
+        <div style="display:flex;gap:8px">
+          <div style="flex:1">
+            <label>Model</label>
+            <select id="model-input">
+              <option value="gpt-4o-mini">gpt-4o-mini (fast)</option>
+              <option value="gpt-4o">gpt-4o (powerful)</option>
+            </select>
+          </div>
+          <div style="flex:1">
+            <label>Parallel Calls</label>
+            <input type="text" id="conc-input" value="30">
+          </div>
+        </div>
+        <button class="btn btn-go" id="btn-run" disabled>Enrich 0 Rows</button>
+        <div id="progress-area"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════════════════════
+//  STATE — single source of truth
+// ═══════════════════════════════════════════════════════════════════════════════
+const S = {
+  data: null, cols: [], feats: [], question: "", colName: "AI_Answer",
+  apiKey: "", apiProvider: "openai", model: "gpt-4o-mini", conc: 30,
+  running: false, stopped: false, results: {},
+  done: 0, total: 0, errors: 0, t0: 0,
+  previewRow: 0, editingPrompt: false, customPrompt: null,
+  crawl: false, urlCol: null, crawlCache: {}, crawlResults: {},
+};
+
+// Auto-detect URL column
+function detectUrlCol(cols) {
+  const priority = ["domain","website","url","homepage","site"];
+  for (const p of priority) {
+    for (const c of cols) {
+      const cl = c.toLowerCase();
+      if (cl === p || (cl.includes(p) && !cl.includes("linkedin"))) return c;
+    }
+  }
+  return null;
+}
+
+function normalizeUrl(u) {
+  if (!u) return null;
+  u = u.toString().trim();
+  if (!u || ["nan","none","n/a"].includes(u.toLowerCase())) return null;
+  if (u.toLowerCase().includes("linkedin.com")) return null;
+  if (!u.startsWith("http://") && !u.startsWith("https://")) u = "https://" + u.replace(/^\/+/, "");
+  try { new URL(u); return u; } catch { return null; }
+}
+
+async function crawlUrl(url) {
+  url = normalizeUrl(url);
+  if (!url) return "";
+  if (S.crawlCache[url] !== undefined) return S.crawlCache[url];
+  try {
+    // Use AllOrigins as a CORS proxy since browsers block direct cross-origin fetches
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+    const r = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) { S.crawlCache[url] = ""; return ""; }
+    const html = await r.text();
+    // Extract text
+    let cleaned = html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, "");
+    const titleMatch = cleaned.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const descMatch = cleaned.match(/<meta\s+name=["']description["']\s+content=["']([^"']+)["']/i);
+    const title = titleMatch ? titleMatch[1] : "";
+    const desc = descMatch ? descMatch[1] : "";
+    let body = cleaned.replace(/<[^>]+>/g, " ").replace(/&[a-z]+;/gi, " ").replace(/\s+/g, " ").trim();
+    const combined = `TITLE: ${title} | DESC: ${desc} | BODY: ${body}`.slice(0, 1500);
+    S.crawlCache[url] = combined;
+    return combined;
+  } catch(e) {
+    S.crawlCache[url] = "";
+    return "";
+  }
+}
+
+const $ = id => document.getElementById(id);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  THEME
+// ═══════════════════════════════════════════════════════════════════════════════
+document.querySelectorAll('.theme-pill').forEach(p => {
+  p.addEventListener('click', () => {
+    document.body.dataset.theme = p.dataset.t;
+    document.querySelectorAll('.theme-pill').forEach(x => x.classList.remove('active'));
+    p.classList.add('active');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PROMPT BUILDER
+// ═══════════════════════════════════════════════════════════════════════════════
+const SYS = `You are a senior GTM research analyst. You classify and analyze companies based on structured feature data.\n\nRULES:\n- Read ALL company data fields carefully before answering.\n- Answer the question directly. 1-2 sentences MAX.\n- If the answer is a category/label, output ONLY the label.\n- If data is genuinely insufficient, say "Insufficient data".\n- NEVER fabricate. Only use what's in the provided data.`;
+
+function buildPrompt(row, feats, question, crawlText = "") {
+  let lines = ["Company Data:"];
+  for (const f of feats) {
+    let v = (row[f] || "").toString().trim();
+    if (!v || v === "NaN" || v === "undefined") v = "N/A";
+    if (v.length > 500) v = v.slice(0, 500) + "...";
+    lines.push(`- ${f}: ${v}`);
+  }
+  if (crawlText) lines.push(`\nWebsite Content (live scrape):\n${crawlText}`);
+  lines.push(`\nQuestion: ${question}`);
+  return lines.join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  UPLOAD
+// ═══════════════════════════════════════════════════════════════════════════════
+const uz = $("upload-zone");
+const fi = $("file-input");
+uz.addEventListener("click", () => fi.click());
+uz.addEventListener("dragover", e => { e.preventDefault(); uz.style.borderColor = "var(--accent)"; });
+uz.addEventListener("dragleave", () => uz.style.borderColor = "");
+uz.addEventListener("drop", e => { e.preventDefault(); uz.style.borderColor = ""; if(e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
+fi.addEventListener("change", e => { if(e.target.files[0]) loadFile(e.target.files[0]); });
+
+function loadFile(file) {
+  Papa.parse(file, { header: true, skipEmptyLines: true, complete: r => {
+    S.data = r.data; S.cols = r.meta.fields || []; S.results = {}; S.crawlResults = {};
+    S.feats = S.cols.filter(c => ["name","description","category","level","industry","funding"]
+      .some(k => c.toLowerCase().includes(k)));
+    if (S.feats.length === 0) S.feats = S.cols.slice(0, Math.min(5, S.cols.length));
+    S.urlCol = detectUrlCol(S.cols);
+    $("url-col-name").textContent = S.urlCol || "not found";
+    uz.textContent = `✓ ${S.data.length} rows loaded`; uz.classList.add("ok");
+    renderChips(); renderTable(); updatePromptPreview(); updateRunBtn();
+    $("hdr-stats").textContent = `${S.data.length} rows × ${S.cols.length} cols`;
+  }});
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  FEATURE CHIPS — no full re-render, just toggle class
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderChips() {
+  const c = $("chips-container"); c.innerHTML = "";
+  for (const col of S.cols) {
+    const chip = document.createElement("span");
+    chip.className = "chip" + (S.feats.includes(col) ? " on" : "");
+    chip.textContent = col;
+    chip.addEventListener("click", () => {
+      const i = S.feats.indexOf(col);
+      if (i >= 0) S.feats.splice(i, 1); else S.feats.push(col);
+      chip.classList.toggle("on");
+      updatePromptPreview();
+    });
+    c.appendChild(chip);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  QUESTION INPUT — NO re-render, just update preview on pause
+// ═══════════════════════════════════════════════════════════════════════════════
+let _qTimer = null;
+$("q-input").addEventListener("input", e => {
+  S.question = e.target.value;
+  clearTimeout(_qTimer);
+  _qTimer = setTimeout(() => { updatePromptPreview(); updateRunBtn(); }, 400);
+});
+$("col-input").addEventListener("input", e => { S.colName = e.target.value; updateRunBtn(); });
+$("api-input").addEventListener("input", e => { S.apiKey = e.target.value; updateRunBtn(); });
+$("model-input").addEventListener("change", e => { S.model = e.target.value; });
+$("conc-input").addEventListener("input", e => { S.conc = parseInt(e.target.value) || 30; });
+$("crawl-toggle").addEventListener("change", e => {
+  S.crawl = e.target.checked;
+  $("crawl-info").style.display = S.crawl ? "block" : "none";
+});
+
+// API provider toggle
+document.querySelectorAll("[data-api]").forEach(pill => {
+  pill.addEventListener("click", () => {
+    document.querySelectorAll("[data-api]").forEach(p => p.classList.remove("on"));
+    pill.classList.add("on");
+    S.apiProvider = pill.dataset.api;
+    // Update model dropdown & hint
+    const sel = $("model-input"); sel.innerHTML = "";
+    if (S.apiProvider === "openai") {
+      sel.innerHTML = '<option value="gpt-4o-mini">gpt-4o-mini (fast)</option><option value="gpt-4o">gpt-4o (powerful)</option>';
+      S.model = "gpt-4o-mini";
+      $("api-key-hint").textContent = "(sk-...)";
+      $("api-input").placeholder = "sk-...";
+    } else {
+      sel.innerHTML = '<option value="claude-haiku-4-5-20251001">claude-haiku-4-5 (fast)</option><option value="claude-sonnet-4-6">claude-sonnet-4-6 (powerful)</option>';
+      S.model = "claude-haiku-4-5-20251001";
+      $("api-key-hint").textContent = "(sk-ant-...)";
+      $("api-input").placeholder = "sk-ant-...";
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PROMPT PREVIEW — targeted update, not full page re-render
+// ═══════════════════════════════════════════════════════════════════════════════
+const promptToggle = $("prompt-toggle");
+const promptDisplay = $("prompt-display");
+const promptEdit = $("prompt-edit");
+
+promptToggle.addEventListener("click", () => {
+  S.editingPrompt = !S.editingPrompt;
+  if (S.editingPrompt) {
+    // Switch to edit mode
+    const raw = S.data && S.feats.length && S.question
+      ? buildPrompt(S.data[S.previewRow] || S.data[0], S.feats, S.question) : "";
+    promptEdit.value = S.customPrompt || raw;
+    promptEdit.style.display = "block"; promptDisplay.style.display = "none";
+    promptToggle.textContent = "Preview";
+    promptEdit.focus();
+  } else {
+    // Switch back to preview, save custom edit
+    S.customPrompt = promptEdit.value;
+    promptEdit.style.display = "none"; promptDisplay.style.display = "block";
+    promptToggle.textContent = "Edit";
+    updatePromptPreview();
+  }
+});
+
+promptEdit.addEventListener("input", () => { S.customPrompt = promptEdit.value; });
+
+function updatePromptPreview() {
+  if (S.editingPrompt) return; // don't overwrite while editing
+  if (!S.data || !S.feats.length || !S.question) {
+    promptDisplay.innerHTML = '<span style="color:var(--text3)">Select features and type a question to see the prompt</span>';
+    return;
+  }
+  const row = S.data[S.previewRow] || S.data[0];
+  const name = (row["Name"] || row[S.cols[0]] || "Row " + S.previewRow);
+  $("preview-row-label").textContent = ` — Row ${S.previewRow}: ${name.toString().slice(0,25)}`;
+
+  let html = `<span class="hl-sys">SYSTEM: ${esc(SYS.split("\n")[0])}...</span>\n\nUSER:\nCompany Data:\n`;
+  for (const f of S.feats) {
+    let v = (row[f] || "N/A").toString().trim();
+    if (v.length > 150) v = v.slice(0, 150) + "...";
+    html += `- ${esc(f)}: <span class="hl-val">${esc(v)}</span>\n`;
+  }
+  if (S.crawl && S.urlCol) {
+    const urlVal = row[S.urlCol] || "N/A";
+    html += `\n<span style="color:var(--pink)">🕷️ Website Content (will be scraped from: ${esc(urlVal)})</span>\n`;
+  }
+  html += `\n<span class="hl-q">Question: ${esc(S.question)}</span>`;
+  promptDisplay.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  TABLE — renders once on file load, cells updated incrementally during enrich
+// ═══════════════════════════════════════════════════════════════════════════════
+const MAX_ROWS = 300;
+
+function renderTable() {
+  const tp = $("table-panel");
+  if (!S.data) return;
+  $("empty-state").style.display = "none";
+
+  let h = '<table id="data-table"><thead><tr><th style="min-width:40px;text-align:center">#</th>';
+  for (const c of S.cols) h += `<th>${esc(c)}</th>`;
+  h += '</tr></thead><tbody>';
+
+  const n = Math.min(S.data.length, MAX_ROWS);
+  for (let i = 0; i < n; i++) {
+    const row = S.data[i];
+    h += `<tr data-r="${i}"><td class="row-idx" data-i="${i}">${i}</td>`;
+    for (const c of S.cols) {
+      h += `<td title="${escA((row[c]||'').toString())}">${esc((row[c]||'').toString().slice(0,80))}</td>`;
+    }
+    h += '</tr>';
+  }
+  if (S.data.length > MAX_ROWS) {
+    h += `<tr><td colspan="${S.cols.length+1}" style="text-align:center;padding:12px;color:var(--text3)">
+      ... and ${S.data.length - MAX_ROWS} more rows (all will be enriched)</td></tr>`;
+  }
+  h += '</tbody></table>';
+  tp.innerHTML = h;
+
+  // Row click → preview that row's prompt
+  tp.addEventListener("click", e => {
+    const idx = e.target.closest(".row-idx");
+    if (idx) { S.previewRow = parseInt(idx.dataset.i); S.customPrompt = null; updatePromptPreview(); }
+  });
+}
+
+function addNewColToTable() {
+  const table = $("data-table"); if (!table) return;
+  // Add header
+  const thead = table.querySelector("thead tr");
+  if (!thead.querySelector(".nc")) {
+    const th = document.createElement("th"); th.className = "nc";
+    th.textContent = S.colName; thead.appendChild(th);
+  }
+  // Add cells to each row
+  const rows = table.querySelectorAll("tbody tr[data-r]");
+  rows.forEach(tr => {
+    if (!tr.querySelector(".nc")) {
+      const td = document.createElement("td");
+      td.className = "nc nc-pending"; td.textContent = "—";
+      td.id = `cell-${tr.dataset.r}`; tr.appendChild(td);
+    }
+  });
+}
+
+function updateCell(idx, text, isErr) {
+  const cell = $(`cell-${idx}`);
+  if (cell) {
+    cell.textContent = text.slice(0, 90);
+    cell.title = text;
+    cell.className = `nc ${isErr ? 'nc-err' : 'nc-ok'}`;
+  }
+}
+
+function markCellRunning(idx) {
+  const cell = $(`cell-${idx}`);
+  if (cell) { cell.textContent = "..."; cell.className = "nc nc-run"; }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  RUN BUTTON STATE
+// ═══════════════════════════════════════════════════════════════════════════════
+function updateRunBtn() {
+  const btn = $("btn-run");
+  const ok = S.data && S.question && S.apiKey && S.feats.length > 0;
+  btn.disabled = !ok;
+  btn.textContent = S.data ? `Enrich ${S.data.length} Rows` : "Enrich 0 Rows";
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  API CALLER
+// ═══════════════════════════════════════════════════════════════════════════════
+async function callAPI(prompt, retries = 5) {
+  let url, headers, body;
+  if (S.apiProvider === "openai") {
+    url = "https://api.openai.com/v1/chat/completions";
+    headers = { "Authorization": `Bearer ${S.apiKey}`, "Content-Type": "application/json" };
+    body = {
+      model: S.model, temperature: 0.1, max_tokens: 200,
+      messages: [{ role: "system", content: SYS }, { role: "user", content: prompt }],
+    };
+  } else {
+    url = "https://api.anthropic.com/v1/messages";
+    headers = {
+      "x-api-key": S.apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+      "Content-Type": "application/json"
+    };
+    body = {
+      model: S.model, temperature: 0.1, max_tokens: 200,
+      system: SYS,
+      messages: [{ role: "user", content: prompt }],
+    };
+  }
+
+  for (let a = 0; a < retries; a++) {
+    try {
+      const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+      if (r.ok) {
+        const d = await r.json();
+        return S.apiProvider === "openai"
+          ? d.choices[0].message.content.trim()
+          : d.content[0].text.trim();
+      }
+      if (r.status === 429 || r.status === 529) { await sleep(parseFloat(r.headers.get("Retry-After") || (1 * 2**a))); continue; }
+      if (r.status >= 500) { await sleep(1 * 2**a); continue; }
+      const e = await r.text(); throw new Error(`${r.status}: ${e.slice(0,80)}`);
+    } catch(e) {
+      if (a < retries - 1) { await sleep(1 * 2**a); continue; }
+      throw e;
+    }
+  }
+  throw new Error("max retries");
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms * 1000));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ENRICHMENT ENGINE
+// ═══════════════════════════════════════════════════════════════════════════════
+async function runEnrich() {
+  S.running = true; S.stopped = false; S.results = {};
+  S.done = 0; S.total = S.data.length; S.errors = 0; S.t0 = Date.now();
+
+  // Swap button
+  const runSec = $("run-section");
+  $("btn-run").style.display = "none";
+  const stopBtn = document.createElement("button");
+  stopBtn.className = "btn btn-stop"; stopBtn.textContent = "Stop";
+  stopBtn.id = "btn-stop";
+  stopBtn.addEventListener("click", () => { S.stopped = true; });
+  runSec.appendChild(stopBtn);
+
+  addNewColToTable();
+  updateProgress();
+
+  const { data, feats, question, conc } = S;
+
+  // ── CRAWL PHASE (if enabled) ──
+  if (S.crawl && S.urlCol) {
+    const crawlArea = $("progress-area");
+    crawlArea.innerHTML = `<div class="coffee-msg"><span class="emoji">🕷️</span>Crawling websites... this runs before enrichment</div>`;
+    const crawlConc = 15;
+    for (let i = 0; i < data.length && !S.stopped; i += crawlConc) {
+      const batch = [];
+      for (let j = 0; j < crawlConc && i + j < data.length; j++) {
+        const idx = i + j;
+        batch.push(crawlUrl(data[idx][S.urlCol]).then(txt => { S.crawlResults[idx] = txt; }));
+      }
+      await Promise.all(batch);
+      crawlArea.innerHTML = `<div class="coffee-msg"><span class="emoji">🕷️</span>Crawled ${Math.min(i+crawlConc, data.length)}/${data.length} sites...</div>`;
+    }
+  }
+
+  let i = 0;
+  while (i < data.length && !S.stopped) {
+    const batch = [];
+    for (let j = 0; j < conc && i + j < data.length; j++) {
+      const idx = i + j;
+      const row = data[idx];
+      // Use custom prompt if user edited it (only for preview row), otherwise build fresh
+      const crawlText = S.crawlResults[idx] || "";
+      const prompt = S.customPrompt && idx === S.previewRow
+        ? S.customPrompt
+        : buildPrompt(row, feats, question, crawlText);
+      markCellRunning(idx);
+      batch.push(
+        callAPI(prompt)
+          .then(ans => { S.results[idx] = ans; S.done++; updateCell(idx, ans, false); updateProgress(); })
+          .catch(err => {
+            const msg = `[ERROR] ${err.message.slice(0,60)}`;
+            S.results[idx] = msg; S.done++; S.errors++; updateCell(idx, msg, true); updateProgress();
+          })
+      );
+    }
+    await Promise.all(batch);
+    i += conc;
+  }
+
+  S.running = false;
+  stopBtn.remove();
+  $("btn-run").style.display = "block";
+  updateProgress();
+}
+
+$("btn-run").addEventListener("click", runEnrich);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PROGRESS + COFFEE MESSAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+const COFFEE_MSGS = [
+  { emoji: "☕", text: "This will take about <T>. Grab a cup of coffee and watch me work!" },
+  { emoji: "🍵", text: "Sit back! ~<T> to go. Time for some chai while I crunch through your data." },
+  { emoji: "🚀", text: "Blasting through <N> rows... ~<T> left. Maybe stretch those legs?" },
+  { emoji: "🎯", text: "Processing <N> rows at <R>/s. About <T> to go — I've got this!" },
+  { emoji: "✅", text: "All done! <N> rows enriched. Your data is ready to download." },
+  { emoji: "⚡", text: "Done in <E>! <N> rows enriched, <ERR> errors. Grab your file below." },
+];
+
+function updateProgress() {
+  const area = $("progress-area");
+  if (S.total === 0) { area.innerHTML = ""; return; }
+
+  const el = (Date.now() - S.t0) / 1000;
+  const rate = el > 0 ? S.done / el : 0;
+  const eta = rate > 0 ? (S.total - S.done) / rate : 0;
+  const pct = (S.done / S.total * 100).toFixed(1);
+  const isDone = S.done === S.total && S.total > 0;
+
+  const fmtTime = s => s < 60 ? `${Math.round(s)}s` : `${Math.floor(s/60)}m ${Math.round(s%60)}s`;
+
+  let coffeeHtml;
+  if (isDone) {
+    const m = COFFEE_MSGS[S.errors > 0 ? 5 : 4];
+    coffeeHtml = `<span class="emoji">${m.emoji}</span><span class="done-msg">${m.text
+      .replace("<N>", S.total).replace("<E>", fmtTime(el)).replace("<ERR>", S.errors)}</span>`;
+  } else if (S.running) {
+    const idx = Math.min(Math.floor(rate), 3);
+    const m = COFFEE_MSGS[idx];
+    coffeeHtml = `<span class="emoji">${m.emoji}</span>${m.text
+      .replace("<T>", fmtTime(eta)).replace("<N>", S.total).replace("<R>", rate.toFixed(0))}`;
+  }
+
+  let html = `
+    <div class="pbar"><div class="pfill" style="width:${pct}%"></div></div>
+    <div class="pstats">
+      <span>${S.done}/${S.total} (${pct}%)</span>
+      <span style="color:var(--green)">${rate.toFixed(1)}/s · ETA ${fmtTime(eta)}</span>
+      <span style="color:var(--red)">${S.errors} err</span>
+    </div>
+  `;
+
+  if (coffeeHtml) html += `<div class="coffee-msg">${coffeeHtml}</div>`;
+
+  if (isDone) {
+    html += `<button class="btn btn-dl" id="btn-dl">Download Enriched CSV</button>`;
+  }
+
+  area.innerHTML = html;
+  $("btn-dl")?.addEventListener("click", downloadCSV);
+
+  // Update header stats
+  if (S.running || isDone) {
+    const cost = ((100 + S.feats.length * 60) * S.total * 0.15 + 50 * S.total * 0.60) / 1e6;
+    $("hdr-stats").textContent = `${S.done}/${S.total} enriched · ${rate.toFixed(0)}/s · ~$${cost.toFixed(2)}`;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  DOWNLOAD
+// ═══════════════════════════════════════════════════════════════════════════════
+function downloadCSV() {
+  const rows = S.data.map((row, i) => ({ ...row, [S.colName]: S.results[i] || "" }));
+  const csv = Papa.unparse(rows, { columns: [...S.cols, S.colName] });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = `enriched_${S.colName.replace(/\s+/g,"_")}.csv`;
+  a.click();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  UTILS
+// ═══════════════════════════════════════════════════════════════════════════════
+function esc(s) { return (s||"").replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escA(s) { return (s||"").replace(/&/g,'&amp;').replace(/"/g,'&quot;'); }
+</script>
+</body>
+</html>

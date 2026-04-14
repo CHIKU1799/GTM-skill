@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+*.log
+*.env
+.env.local
+venv/
+*.enriched.csv
+*_enriched.csv
+/test_output/
