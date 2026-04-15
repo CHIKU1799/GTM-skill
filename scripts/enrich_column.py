@@ -146,7 +146,7 @@ async def _call_openai(
     model: str,
     system_prompt: str,
     max_tokens: int,
-) -> tuple[int, str]:
+) -> tuple:
     """Fire one OpenAI completion. Returns (row_index, response_text)."""
     body = {
         "model": model,
@@ -166,7 +166,10 @@ async def _call_openai(
                 ) as r:
                     if r.status == 200:
                         d = await r.json()
-                        return (row_idx, d["choices"][0]["message"]["content"].strip())
+                        choices = d.get("choices", [])
+                        if not choices:
+                            return (row_idx, "[ERROR:EMPTY] No choices returned")
+                        return (row_idx, choices[0]["message"]["content"].strip())
                     if r.status == 429:
                         wait = float(r.headers.get("Retry-After", BACKOFF_BASE * 2**attempt))
                         await asyncio.sleep(wait)
@@ -211,7 +214,10 @@ async def _call_anthropic(
                 ) as r:
                     if r.status == 200:
                         d = await r.json()
-                        return (row_idx, d["content"][0]["text"].strip())
+                        content = d.get("content", [])
+                        if not content:
+                            return (row_idx, "[ERROR:EMPTY] No content returned")
+                        return (row_idx, content[0]["text"].strip())
                     if r.status == 429 or r.status >= 500:
                         await asyncio.sleep(BACKOFF_BASE * 2**attempt)
                         continue
@@ -269,6 +275,15 @@ async def _run_enrich(
     max_tokens: int = MAX_RESP_TOK,
 ) -> pd.DataFrame:
     """Async core: build prompts → blast API → collect results → return df."""
+    # ── Edge case: empty dataframe ──
+    if df.empty:
+        print("  ⚠ Empty dataset — nothing to enrich.", file=sys.stderr)
+        df[new_column] = []
+        return df
+
+    # ── Edge case: strip column whitespace ──
+    df.columns = df.columns.str.strip()
+
     if model is None:
         model = ANTHROPIC_MODEL if api == "anthropic" else MODEL
     total = len(df)
@@ -314,7 +329,7 @@ async def _run_enrich(
         for coro in asyncio.as_completed(tasks):
             idx, resp = await coro
             results[idx] = resp
-            prog.tick(resp.startswith("[ERROR"))
+            prog.tick(str(resp).startswith("[ERROR"))
 
     prog.summary()
 
@@ -413,7 +428,16 @@ def main():
     # ── Read file ──
     path = Path(args.input)
     print(f"  Reading {path}...", file=sys.stderr)
-    df = pd.read_excel(path) if path.suffix in (".xlsx",".xls") else pd.read_csv(path, low_memory=False)
+    if path.suffix in (".xlsx", ".xls"):
+        df = pd.read_excel(path)
+    else:
+        try:
+            df = pd.read_csv(path, low_memory=False)
+        except UnicodeDecodeError:
+            df = pd.read_csv(path, low_memory=False, encoding="latin-1")
+            print("  ⚠ Used latin-1 encoding fallback", file=sys.stderr)
+    # Strip whitespace from column names
+    df.columns = df.columns.str.strip()
     print(f"  Loaded: {len(df)} rows × {len(df.columns)} cols", file=sys.stderr)
 
     # ── Parse features ──

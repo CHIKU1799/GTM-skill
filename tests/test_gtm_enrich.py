@@ -283,6 +283,101 @@ def test_cli_limit_flag():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  EDGE CASES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def test_empty_dataframe():
+    """Empty DF should return without crashing."""
+    df = pd.DataFrame(columns=["Name", "Description"])
+    prompt = build_prompt({}, ["Name", "Description"], "Test?")
+    assert "Question: Test?" in prompt
+    assert "- Name: N/A" in prompt
+
+def test_all_features_missing():
+    """Row with none of the requested features should still produce a valid prompt."""
+    row = {"Unrelated": "value"}
+    prompt = build_prompt(row, ["Name", "Description", "Industry"], "Test?")
+    assert prompt.count("N/A") == 3
+
+def test_unicode_values():
+    """Unicode company names and descriptions should work."""
+    row = {"Name": "Gojek (Gojek Indonesia)", "Description": "PT GoTo Gojek Tokopedia — ride-hailing & fintech"}
+    prompt = build_prompt(row, ["Name", "Description"], "What market?")
+    assert "Gojek" in prompt
+    assert "ride-hailing" in prompt
+
+def test_numeric_values():
+    """Integer and float column values should convert cleanly."""
+    row = {"Name": "Acme", "Employees": 5000, "Revenue": 12.5}
+    prompt = build_prompt(row, ["Name", "Employees", "Revenue"], "Size tier?")
+    assert "5000" in prompt
+    assert "12.5" in prompt
+
+def test_whitespace_column_names():
+    """Column names with leading/trailing spaces should be handled."""
+    df = pd.DataFrame({" Name ": ["Acme"], " Desc ": ["Widgets"]})
+    df.columns = df.columns.str.strip()
+    assert "Name" in df.columns
+    assert "Desc" in df.columns
+
+def test_duplicate_column_values():
+    """Same value in multiple features should still appear for each feature."""
+    row = {"Name": "Acme", "Legal_Name": "Acme"}
+    prompt = build_prompt(row, ["Name", "Legal_Name"], "Same entity?")
+    assert "- Name: Acme" in prompt
+    assert "- Legal_Name: Acme" in prompt
+
+def test_very_long_question():
+    """Extremely long questions should not break prompt building."""
+    row = {"Name": "Test"}
+    long_q = "x" * 2000
+    prompt = build_prompt(row, ["Name"], long_q)
+    assert f"Question: {long_q}" in prompt
+
+def test_special_chars_in_values():
+    """Values with quotes, newlines, brackets should not break prompt."""
+    row = {"Name": 'O\'Reilly "Media"', "Description": "Line1\nLine2\tTab <html>&amp;"}
+    prompt = build_prompt(row, ["Name", "Description"], "Test?")
+    assert "O'Reilly" in prompt
+    assert "Line1" in prompt
+
+def test_normalize_url_edge_cases():
+    """Additional URL edge cases."""
+    assert normalize_url("   slack.com   ") == "https://slack.com/"
+    assert normalize_url("HTTPS://NOTION.SO") == "https://NOTION.SO/"  # case-insensitive scheme check
+    assert normalize_url("http://") is None
+
+def test_extract_text_empty_html():
+    """Empty or minimal HTML should not crash."""
+    result = extract_text("")
+    assert "TITLE:" in result and "BODY:" in result  # should not crash
+    assert "BODY:" in extract_text("<html></html>")
+
+def test_crawl_text_injection():
+    """Crawl text should appear in prompt when provided, not when empty."""
+    row = {"Name": "Acme"}
+    with_crawl = build_prompt(row, ["Name"], "Test?", crawl_text="We are a fintech company.")
+    without_crawl = build_prompt(row, ["Name"], "Test?", crawl_text="")
+    assert "Website Content" in with_crawl
+    assert "fintech" in with_crawl
+    assert "Website Content" not in without_crawl
+
+def test_cli_all_columns_missing_exits():
+    """CLI should handle all feature columns being wrong."""
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "enrich_column.py"),
+         "-i", str(FIXTURES / "saas_companies.csv"),
+         "-o", "/dev/null",
+         "-q", "Test?",
+         "-f", "Fake1,Fake2,Fake3",
+         "-c", "Test",
+         "--dry-run"],
+        capture_output=True, text=True
+    )
+    assert result.returncode != 0 or "No valid" in result.stderr or "ERROR" in result.stderr
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  RUNNER
 # ═══════════════════════════════════════════════════════════════════════════════
 

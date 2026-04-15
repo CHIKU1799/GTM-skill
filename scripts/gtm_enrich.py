@@ -83,7 +83,7 @@ def normalize_url(url: str) -> str | None:
     if not url or url.lower() in ("nan", "none", "n/a"): return None
     # Skip LinkedIn explicitly
     if "linkedin.com" in url.lower(): return None
-    if not url.startswith(("http://", "https://")):
+    if not url.lower().startswith(("http://", "https://")):
         url = "https://" + url.lstrip("/")
     try:
         p = urlparse(url)
@@ -177,7 +177,10 @@ async def call_openai(session, prompt, headers, model, sys_prompt, max_tok):
         timeout=aiohttp.ClientTimeout(total=TIMEOUT)) as r:
         if r.status == 200:
             d = await r.json()
-            return d["choices"][0]["message"]["content"].strip()
+            choices = d.get("choices", [])
+            if not choices:
+                raise RuntimeError("[EMPTY] OpenAI returned no choices")
+            return choices[0]["message"]["content"].strip()
         raise RuntimeError(f"[{r.status}] {(await r.text())[:120]}")
 
 
@@ -191,7 +194,10 @@ async def call_anthropic(session, prompt, headers, model, sys_prompt, max_tok):
         timeout=aiohttp.ClientTimeout(total=TIMEOUT)) as r:
         if r.status == 200:
             d = await r.json()
-            return d["content"][0]["text"].strip()
+            content = d.get("content", [])
+            if not content:
+                raise RuntimeError("[EMPTY] Anthropic returned no content")
+            return content[0]["text"].strip()
         raise RuntimeError(f"[{r.status}] {(await r.text())[:120]}")
 
 
@@ -265,6 +271,15 @@ def enrich(
     model = model or MODELS[api]
 
     async def _go():
+        # ── Edge case: empty dataframe ──
+        if df.empty:
+            print("  ⚠ Empty dataset — nothing to enrich.", file=sys.stderr)
+            df[column] = []
+            return df
+
+        # ── Edge case: strip column whitespace ──
+        df.columns = df.columns.str.strip()
+
         total = len(df)
 
         print(f"\n  ╔══════════════════════════════════════════════════╗", file=sys.stderr)
@@ -290,15 +305,11 @@ def enrich(
                 crawl_sem = asyncio.Semaphore(20)  # lower concurrency for crawling
                 bar = Bar(total, "Crawling")
                 crawl_conn = aiohttp.TCPConnector(limit=30, ttl_dns_cache=300, ssl=False)
+                # Reset index to ensure iloc alignment
+                df_reset = df.reset_index(drop=True)
                 async with aiohttp.ClientSession(connector=crawl_conn) as session:
-                    tasks = [crawl_url(session, str(df.iloc[i].get(url_col, "")), crawl_sem)
-                             for i in range(total)]
-                    for i, task in enumerate(asyncio.as_completed(tasks)):
-                        # We can't know original idx from as_completed, use gather instead
-                        pass
-                    # Use gather for deterministic index mapping
                     results = await asyncio.gather(*[
-                        crawl_url(session, str(df.iloc[i].get(url_col, "")), crawl_sem)
+                        crawl_url(session, str(df_reset.iloc[i].get(url_col, "")), crawl_sem)
                         for i in range(total)
                     ], return_exceptions=True)
                     for i, r in enumerate(results):
@@ -329,7 +340,7 @@ def enrich(
             for coro in asyncio.as_completed(tasks):
                 idx, resp = await coro
                 results[idx] = resp
-                bar.tick(resp.startswith("[ERROR"))
+                bar.tick(str(resp).startswith("[ERROR"))
 
         bar.done_msg()
 
@@ -365,14 +376,28 @@ def main():
 
     # Read
     path = Path(args.input)
-    df = pd.read_excel(path) if path.suffix in (".xlsx",".xls") else pd.read_csv(path, low_memory=False)
+    if path.suffix in (".xlsx", ".xls"):
+        df = pd.read_excel(path)
+    else:
+        try:
+            df = pd.read_csv(path, low_memory=False)
+        except UnicodeDecodeError:
+            df = pd.read_csv(path, low_memory=False, encoding="latin-1")
+            print("  ⚠ Used latin-1 encoding fallback", file=sys.stderr)
+    # Strip whitespace from column names
+    df.columns = df.columns.str.strip()
     print(f"  Loaded: {len(df)} rows × {len(df.columns)} cols from {path.name}", file=sys.stderr)
+
+    if df.empty:
+        sys.exit("ERROR: File is empty — no rows to enrich.")
 
     features = [f.strip() for f in args.features.split(",")]
     bad = [f for f in features if f not in df.columns]
     if bad:
         print(f"  ⚠ Missing: {bad}  |  Available: {list(df.columns)}", file=sys.stderr)
         features = [f for f in features if f in df.columns]
+    if not features:
+        sys.exit("ERROR: No valid feature columns found. Check column names.")
 
     if args.limit: df = df.head(args.limit).copy()
 
