@@ -1,0 +1,1149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>GTM Master — Personal AI Assistant for every Sheet</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root{
+    --bg:#0b0d10; --bg2:#111418; --bg3:#161a1f; --bg4:#1d222a;
+    --border:#23282f; --border2:#2c333d;
+    --text:#e7ecf2; --text2:#9aa4b2; --text3:#6b7280;
+    --accent:#f3802d; --accent2:#ff9a4a; --accent-glow:rgba(243,128,45,.12);
+    --good:#22c55e; --warn:#eab308; --err:#ef4444;
+    --claude:#c77b4e;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;line-height:1.45}
+  /* ── Layout: fixed left dock + right content ─────────────────── */
+  .app{display:grid;grid-template-columns:480px 1fr;height:100vh;overflow:hidden}
+  @media (max-width: 1200px){ .app{grid-template-columns:420px 1fr} }
+  .dock{background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;min-width:0;height:100vh;overflow:hidden}
+  .main{background:var(--bg);display:flex;flex-direction:column;min-width:0;overflow:hidden}
+  /* Dock header */
+  .dock-hdr{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+  .logo{width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,var(--accent),var(--claude));display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff}
+  .brand{font-weight:700;font-size:14px}
+  .brand-sub{font-size:10px;color:var(--text3);letter-spacing:.8px;text-transform:uppercase}
+  /* Stage rail */
+  .rail{display:grid;grid-template-columns:repeat(5,1fr);padding:8px;gap:4px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2)}
+  .stage{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 4px;border-radius:6px;cursor:pointer;font-size:10px;color:var(--text2);border:1px solid transparent;transition:.15s;text-align:center;min-width:0}
+  .stage:hover{background:var(--bg3);color:var(--text)}
+  .stage.on{background:var(--accent-glow);color:var(--accent);border-color:rgba(243,128,45,.25)}
+  .stage .num{width:22px;height:22px;border-radius:50%;background:var(--bg4);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--text2)}
+  .stage.on .num{background:var(--accent);color:#0b0d10}
+  .stage.done .num{background:var(--good);color:#0b0d10}
+  .stage-lbl{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+  .stage-hint{display:none}
+  /* Panel scroll styling */
+  .panel::-webkit-scrollbar{width:10px}
+  .panel::-webkit-scrollbar-thumb{background:var(--border2);border-radius:6px;border:2px solid var(--bg2)}
+  .panel h3{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--text2);margin-bottom:10px;font-weight:600}
+  .panel h4{font-size:11px;color:var(--text3);margin:14px 0 6px;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+  label{display:block;font-size:11px;color:var(--text2);margin-bottom:4px;font-weight:500}
+  input[type=text],input[type=password],input[type=number],select,textarea{
+    width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);
+    padding:8px 10px;border-radius:6px;font-size:12px;font-family:inherit;outline:none;transition:.15s
+  }
+  input:focus,select:focus,textarea:focus{border-color:var(--accent);background:var(--bg4)}
+  textarea{min-height:70px;resize:vertical;line-height:1.5}
+  .row{display:flex;gap:8px;margin-bottom:10px}
+  .row>*{flex:1}
+  .field{margin-bottom:10px}
+  .btn{background:var(--accent);color:#0b0d10;border:none;padding:9px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:6px;justify-content:center}
+  .btn:hover{background:var(--accent2)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .btn.sec{background:var(--bg4);color:var(--text)}
+  .btn.sec:hover{background:var(--border2)}
+  .btn.ghost{background:transparent;border:1px solid var(--border2);color:var(--text2)}
+  .btn.ghost:hover{border-color:var(--accent);color:var(--accent)}
+  .btn.full{width:100%}
+  .btn.sm{padding:5px 10px;font-size:11px}
+  .chip-row{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px}
+  .chip{background:var(--bg3);border:1px solid var(--border);padding:5px 10px;border-radius:999px;font-size:11px;color:var(--text2);cursor:pointer;transition:.15s;user-select:none}
+  .chip:hover{border-color:var(--border2);color:var(--text)}
+  .chip.on{background:var(--accent-glow);border-color:var(--accent);color:var(--accent)}
+  .pill{display:inline-block;font-size:10px;padding:2px 7px;border-radius:999px;background:var(--bg4);color:var(--text2);font-weight:500}
+  .pill.ok{background:rgba(34,197,94,.15);color:var(--good)}
+  .pill.warn{background:rgba(234,179,8,.15);color:var(--warn)}
+  .pill.err{background:rgba(239,68,68,.15);color:var(--err)}
+  .card{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px}
+  .card-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .muted{color:var(--text3);font-size:11px}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:11px}
+  .kv>div:nth-child(odd){color:var(--text3)}
+  .kv>div:nth-child(even){color:var(--text)}
+  hr{border:0;border-top:1px solid var(--border);margin:14px 0}
+  details>summary{cursor:pointer;list-style:none;padding:6px 0;color:var(--text2);font-size:11px;user-select:none}
+  details>summary:hover{color:var(--text)}
+  details>summary::before{content:"▸";display:inline-block;margin-right:6px;transition:.15s}
+  details[open]>summary::before{transform:rotate(90deg)}
+  /* Footer status bar */
+  .dock-ftr{border-top:1px solid var(--border);padding:10px 14px;display:flex;gap:8px;align-items:center;justify-content:space-between;background:var(--bg2);flex-shrink:0}
+  .status-dot{width:8px;height:8px;border-radius:50%;background:var(--text3);display:inline-block;margin-right:6px}
+  .status-dot.ok{background:var(--good);box-shadow:0 0 8px var(--good)}
+  .status-dot.run{background:var(--accent);box-shadow:0 0 8px var(--accent);animation:pulse 1s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  /* Main content area */
+  .topbar{padding:10px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--bg2);flex-shrink:0}
+  .crumb{font-size:12px;color:var(--text2)}
+  .crumb b{color:var(--text)}
+  .main-inner{flex:1;display:flex;flex-direction:column;overflow:hidden}
+  /* Data table */
+  .table-wrap{flex:1;overflow:auto;padding:0 16px}
+  table{border-collapse:collapse;font-size:11px;width:max-content;min-width:100%}
+  th,td{padding:6px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;white-space:nowrap;max-width:340px;overflow:hidden;text-overflow:ellipsis}
+  th{background:var(--bg2);color:var(--text2);font-size:10px;text-transform:uppercase;letter-spacing:.5px;font-weight:600;position:sticky;top:0;z-index:1;border-bottom:1px solid var(--border2)}
+  tbody tr:hover{background:var(--bg2)}
+  td.added{background:var(--accent-glow);color:var(--accent)}
+  td.err{color:var(--err)}
+  .empty{padding:40px;text-align:center;color:var(--text3)}
+  .empty-title{font-size:14px;color:var(--text2);margin-bottom:6px}
+  .drop{border:2px dashed var(--border2);padding:28px;text-align:center;border-radius:8px;color:var(--text2);margin-bottom:10px;cursor:pointer;transition:.15s;font-size:12px}
+  .drop:hover{border-color:var(--accent);background:var(--accent-glow);color:var(--accent)}
+  .drop.over{border-color:var(--accent);background:var(--accent-glow)}
+  /* Progress */
+  .prog-wrap{padding:10px 16px;border-top:1px solid var(--border);background:var(--bg2);display:none;flex-shrink:0}
+  .prog-wrap.on{display:block}
+  .prog-bar{height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;margin:6px 0}
+  .prog-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:.3s;width:0}
+  .prog-meta{display:flex;justify-content:space-between;font-size:11px;color:var(--text2)}
+  /* Prompt preview */
+  .preview{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;font-family:"SF Mono",Monaco,monospace;font-size:11px;line-height:1.5;white-space:pre-wrap;max-height:240px;overflow-y:auto;color:var(--text2)}
+  /* Log */
+  .log{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;font-family:"SF Mono",Monaco,monospace;font-size:10.5px;max-height:160px;overflow-y:auto;margin-top:8px}
+  .log-line{padding:2px 0;color:var(--text2)}
+  .log-line.err{color:var(--err)}
+  .log-line.ok{color:var(--good)}
+  .log-line.info{color:var(--text3)}
+  .sel-count{font-size:10px;color:var(--accent);font-weight:600;margin-left:6px}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+  ::-webkit-scrollbar-thumb:hover{background:var(--text3)}
+  /* Toast */
+  .toast{position:fixed;top:16px;right:16px;background:var(--bg4);border:1px solid var(--border2);padding:10px 14px;border-radius:8px;font-size:12px;z-index:999;display:flex;align-items:center;gap:8px;box-shadow:0 6px 20px rgba(0,0,0,.4);transform:translateX(140%);transition:transform .25s ease-out}
+  .toast.show{transform:translateX(0)}
+  .toast.ok{border-color:var(--good);color:var(--good)}
+  .toast.err{border-color:var(--err);color:var(--err)}
+  .toast.info{border-color:var(--accent);color:var(--accent)}
+  /* Stage step checklist */
+  .step{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:11px;color:var(--text2)}
+  .step .tick{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--border2);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:9px}
+  .step.done .tick{background:var(--good);border-color:var(--good);color:#000}
+  .step.done{color:var(--text)}
+  .step.run .tick{border-color:var(--accent);animation:pulse 1s ease-in-out infinite}
+  .step.run{color:var(--accent)}
+  .start-btn{background:var(--good);color:#000;border:none;padding:10px 16px;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:8px;justify-content:center;width:100%;transition:.15s}
+  .start-btn:hover{background:#16a34a}
+  .start-btn:disabled{opacity:.4;cursor:not-allowed}
+  .start-btn.stop{background:var(--err);color:#fff}
+  .saved-badge{display:inline-flex;align-items:center;gap:4px;color:var(--good);font-size:11px;font-weight:600;margin-left:8px}
+  /* Sticky action bar — fully opaque, pinned to bottom, never overlaps content */
+  .action-bar{position:sticky;bottom:0;margin:24px -16px 0 -16px;padding:14px 16px;background:var(--bg2);border-top:1px solid var(--border2);display:flex;gap:8px;z-index:10;box-shadow:0 -8px 16px -8px rgba(0,0,0,.5)}
+  .action-bar .start-btn{flex:2}
+  .action-bar .btn{flex:1}
+  /* Panel bottom padding matches action-bar height so nothing sits under it */
+  .panel{flex:1;overflow-y:auto;overflow-x:hidden;padding:14px 16px 0 16px;scroll-behavior:smooth;display:flex;flex-direction:column}
+  .panel > *:not(.action-bar){flex-shrink:0}
+  .panel-body{flex:1;min-height:0}
+  /* Compact stage rail — titles under number */
+  .rail .stage{position:relative}
+  .rail .stage.done::after{content:"✓";position:absolute;top:3px;right:5px;color:var(--good);font-size:9px;font-weight:700}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ═══════════════ LEFT DOCK (fixed 440px) ═══════════════ -->
+  <aside class="dock">
+    <div class="dock-hdr">
+      <div class="logo">G</div>
+      <div style="flex:1">
+        <div class="brand">GTM Master</div>
+        <div class="brand-sub">Personal AI · Every Sheet</div>
+      </div>
+      <button class="btn ghost sm" id="btn-reset" title="Clear session">Reset</button>
+    </div>
+
+    <!-- Stage rail -->
+    <div class="rail" id="rail"></div>
+
+    <!-- Stage panel -->
+    <div class="panel" id="panel"></div>
+
+    <!-- Footer status -->
+    <div class="dock-ftr">
+      <div style="font-size:10px">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-text">Ready</span>
+      </div>
+      <div class="muted" id="status-meta"></div>
+    </div>
+  </aside>
+
+  <!-- ═══════════════ RIGHT MAIN (data + progress) ═══════════════ -->
+  <main class="main">
+    <div class="topbar">
+      <div class="crumb" id="crumb">No dataset loaded</div>
+      <div style="display:flex;gap:6px">
+        <button class="btn ghost sm" id="btn-download-csv">↓ CSV</button>
+        <button class="btn ghost sm" id="btn-download-xlsx">↓ XLSX</button>
+        <button class="btn ghost sm" id="btn-push-sheet" disabled>↑ Google Sheet</button>
+      </div>
+    </div>
+    <div class="main-inner">
+      <div class="table-wrap" id="table-wrap">
+        <div class="empty">
+          <div class="empty-title">👋 Load a dataset to begin</div>
+          <div class="muted">CSV · XLSX · Google Sheets · all fully local except API calls</div>
+        </div>
+      </div>
+      <div class="prog-wrap" id="prog-wrap">
+        <div class="prog-meta">
+          <span id="prog-label">Working…</span>
+          <span id="prog-pct">0 / 0</span>
+        </div>
+        <div class="prog-bar"><div class="prog-fill" id="prog-fill"></div></div>
+        <div id="prog-log" class="log"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════
+   GTM MASTER — single-file personal AI assistant
+   Stages: Keys · Data · Hypothesis · Classify · People · Enrich · Segment · Score · Export
+═══════════════════════════════════════════════════════════════════ */
+
+/* ── State ─────────────────────────────────────────────────────── */
+const LS = "gtm_master_v1";
+const state = {
+  stage: "keys",
+  keys: { anthropic: "", apify: "", googleClientId: "" },
+  models: { bulk: "claude-haiku-4-5-20251001", reasoning: "claude-sonnet-4-5-20250929" },
+  data: { rows: [], cols: [], source: null, fileName: null, sheetId: null, sheetName: null },
+  sel: { features: [], urlCol: null, linkedinCol: null, nameCol: null, domainCol: null },
+  google: { token: null, expires: 0 },
+  gtm: { hypothesis: null, segments: null },
+  running: false,
+  progress: { done: 0, total: 0, errs: 0 },
+  concurrency: 10,
+  stageDone: new Set(),
+};
+
+/* Load persisted keys */
+try {
+  const saved = JSON.parse(localStorage.getItem(LS) || "{}");
+  if (saved.keys) Object.assign(state.keys, saved.keys);
+  if (saved.models) Object.assign(state.models, saved.models);
+} catch(e){}
+
+function persist() {
+  localStorage.setItem(LS, JSON.stringify({ keys: state.keys, models: state.models }));
+}
+
+/* ── Stage definitions ─────────────────────────────────────────── */
+const STAGES = [
+  { id:"keys",   num:"🔑", title:"Keys" },
+  { id:"data",   num:"1",  title:"Data" },
+  { id:"ask",    num:"2",  title:"Ask Claude" },
+  { id:"people", num:"3",  title:"Find People" },
+  { id:"export", num:"4",  title:"Export" },
+];
+
+/* ── Utility DOM + log ─────────────────────────────────────────── */
+const $ = (id) => document.getElementById(id);
+const h = (html) => { const d=document.createElement("div"); d.innerHTML=html.trim(); return d.firstElementChild; };
+
+function log(msg, kind="info") {
+  const el = $("prog-log");
+  if (!el) return;
+  const line = document.createElement("div");
+  line.className = "log-line " + kind;
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+function setStatus(text, kind="") {
+  $("status-text").textContent = text;
+  const dot = $("status-dot");
+  dot.className = "status-dot" + (kind ? " " + kind : "");
+}
+
+/* Toast notification (visible confirmation for Save / start / finish) */
+function toast(msg, kind="ok", ms=2600) {
+  let t = document.getElementById("gtm-toast");
+  if (!t) {
+    t = document.createElement("div");
+    t.id = "gtm-toast";
+    t.className = "toast";
+    document.body.appendChild(t);
+  }
+  t.className = "toast " + kind;
+  t.innerHTML = `<span>${kind==="ok"?"✓":kind==="err"?"✕":"●"}</span><span>${msg}</span>`;
+  requestAnimationFrame(()=>t.classList.add("show"));
+  clearTimeout(t._tid);
+  t._tid = setTimeout(()=>t.classList.remove("show"), ms);
+}
+
+/* Per-stage step checklist — renders into any container by id */
+function renderSteps(containerId, steps) {
+  const el = $(containerId);
+  if (!el) return;
+  el.innerHTML = steps.map((s,i) => `
+    <div class="step ${s.state||''}" data-i="${i}">
+      <div class="tick">${s.state==="done"?"✓":s.state==="run"?"●":i+1}</div>
+      <div>${s.label}</div>
+    </div>`).join("");
+}
+function updateStep(containerId, i, state) {
+  const el = $(containerId);
+  if (!el) return;
+  const row = el.querySelector(`.step[data-i="${i}"]`);
+  if (!row) return;
+  row.classList.remove("run","done");
+  row.classList.add(state);
+  row.querySelector(".tick").textContent = state==="done"?"✓":state==="run"?"●":i+1;
+}
+
+function setCrumb() {
+  const d = state.data;
+  if (!d.rows.length) { $("crumb").innerHTML = "No dataset loaded"; return; }
+  $("crumb").innerHTML = `<b>${d.fileName || d.sheetName || "Untitled"}</b> · ${d.rows.length} rows · ${d.cols.length} cols`;
+}
+
+/* ── Render rail ───────────────────────────────────────────────── */
+function renderRail() {
+  const rail = $("rail");
+  rail.innerHTML = "";
+  STAGES.forEach(s => {
+    const el = h(`<div class="stage${state.stage===s.id?" on":""}${state.stageDone.has(s.id)?" done":""}" data-id="${s.id}" title="${s.title}">
+      <div class="num">${s.num}</div>
+      <div class="stage-lbl">${s.title}</div>
+    </div>`);
+    el.onclick = () => go(s.id);
+    rail.appendChild(el);
+  });
+}
+
+function go(id) {
+  state.stage = id;
+  renderRail();
+  renderPanel();
+  const p = $("panel");
+  if (p) p.scrollTop = 0;
+}
+
+/* Universal save — snapshot current rows + state to localStorage */
+function saveProgress(stageLabel) {
+  try {
+    const snap = {
+      ts: Date.now(),
+      stage: state.stage,
+      data: { rows: state.data.rows, cols: state.data.cols, fileName: state.data.fileName, sheetId: state.data.sheetId, sheetName: state.data.sheetName },
+      sel: state.sel,
+      gtm: state.gtm,
+      stageDone: Array.from(state.stageDone),
+    };
+    localStorage.setItem(LS + "_progress", JSON.stringify(snap));
+    toast(`Progress saved (${stageLabel || state.stage})`, "ok");
+    setStatus("Progress saved", "ok");
+  } catch(e) { toast("Save failed: " + e.message, "err"); }
+}
+
+function loadProgress() {
+  try {
+    const raw = localStorage.getItem(LS + "_progress");
+    if (!raw) return false;
+    const snap = JSON.parse(raw);
+    if (snap.data && snap.data.rows) Object.assign(state.data, snap.data);
+    if (snap.sel) Object.assign(state.sel, snap.sel);
+    if (snap.gtm) Object.assign(state.gtm, snap.gtm);
+    if (snap.stageDone) state.stageDone = new Set(snap.stageDone);
+    setCrumb(); renderTable(); renderRail();
+    toast(`Restored snapshot from ${new Date(snap.ts).toLocaleTimeString()}`, "ok");
+    return true;
+  } catch(e) { return false; }
+}
+
+/* Render the sticky action bar at the bottom of every stage panel */
+function actionBar({ startId, startLabel, saveLabel = "💾 Save Progress", extraBtns = "" }) {
+  return `
+    <div class="action-bar">
+      ${startId ? `<button class="start-btn" id="${startId}">▶ ${startLabel}</button>` : ''}
+      <button class="btn sec" id="save-progress">${saveLabel}</button>
+      ${extraBtns}
+    </div>`;
+}
+function wireSaveBtn(label){
+  const b = $("save-progress");
+  if (b) b.onclick = () => saveProgress(label);
+}
+
+/* ── Render panel (per stage) ─────────────────────────────────── */
+function renderPanel() {
+  const el = $("panel");
+  el.innerHTML = "";
+  const fn = PANELS[state.stage];
+  if (fn) fn(el);
+}
+
+const PANELS = {};
+
+/* ──────────── Stage: Keys ──────────── */
+PANELS.keys = (el) => {
+  el.innerHTML = `
+    <h3>API Keys</h3>
+    <p class="muted" style="margin-bottom:14px">Stored in <code>localStorage</code> — never sent anywhere except the provider's own API. Use at your own risk; clear with <b>Reset</b>.</p>
+
+    <div class="field">
+      <label>Anthropic API Key <span class="pill ${state.keys.anthropic?'ok':'warn'}">${state.keys.anthropic?'set':'missing'}</span></label>
+      <input id="k-anth" type="password" placeholder="sk-ant-api03-..." value="${state.keys.anthropic}"/>
+    </div>
+    <div class="field">
+      <label>Apify Token <span class="pill ${state.keys.apify?'ok':'warn'}">${state.keys.apify?'set':'missing'}</span></label>
+      <input id="k-apify" type="password" placeholder="apify_api_..." value="${state.keys.apify}"/>
+    </div>
+    <div class="field">
+      <label>Google OAuth Client ID <span class="pill ${state.keys.googleClientId?'ok':'warn'}">${state.keys.googleClientId?'set':'optional'}</span></label>
+      <input id="k-gcid" type="text" placeholder="xxxxx.apps.googleusercontent.com" value="${state.keys.googleClientId}"/>
+      <div class="muted" style="margin-top:4px">Create at console.cloud.google.com → APIs & Services → Credentials → OAuth client → Web application. Add <code>${location.origin || 'file://'}</code> as Authorized JS origin.</div>
+    </div>
+
+    <h4>Master Model Routing</h4>
+    <div class="field">
+      <label>Bulk model (Haiku — per-row enrichment)</label>
+      <select id="k-bulk">
+        <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 (fast, cheap)</option>
+        <option value="claude-sonnet-4-5-20250929">claude-sonnet-4-5</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Reasoning model (Sonnet — hypothesis, segmentation)</label>
+      <select id="k-reason">
+        <option value="claude-sonnet-4-5-20250929">claude-sonnet-4-5 (deep)</option>
+        <option value="claude-opus-4-5">claude-opus-4-5</option>
+        <option value="claude-haiku-4-5-20251001">claude-haiku-4-5</option>
+      </select>
+    </div>
+
+    <button class="start-btn" id="k-save">💾  Save Keys  <span id="k-saved-badge" style="display:none" class="saved-badge">✓ Saved</span></button>
+    <div id="k-saved-inline" class="muted" style="margin-top:8px;text-align:center"></div>
+  `;
+  $("k-bulk").value = state.models.bulk;
+  $("k-reason").value = state.models.reasoning;
+
+  // Show persistent "saved" indicator if we already have a key
+  if (state.keys.anthropic) {
+    $("k-saved-inline").innerHTML = `<span class="pill ok">✓ Keys already saved — will persist across reloads</span>`;
+  }
+
+  $("k-save").onclick = () => {
+    const prevAnth = state.keys.anthropic;
+    state.keys.anthropic = $("k-anth").value.trim();
+    state.keys.apify = $("k-apify").value.trim();
+    state.keys.googleClientId = $("k-gcid").value.trim();
+    state.models.bulk = $("k-bulk").value;
+    state.models.reasoning = $("k-reason").value;
+    persist();
+    state.stageDone.add("keys");
+
+    // Visible feedback
+    toast(`Saved: ${state.keys.anthropic?'Anthropic ✓':''} ${state.keys.apify?'· Apify ✓':''} ${state.keys.googleClientId?'· Google ✓':''}`, "ok");
+    $("k-saved-badge").style.display = "inline-flex";
+    $("k-saved-inline").innerHTML = `<span class="pill ok">✓ Saved to browser · ${new Date().toLocaleTimeString()}</span>`;
+    setStatus("Keys saved", "ok");
+    renderRail();
+
+    // Auto-advance only if this is the first save
+    if (!prevAnth && state.keys.anthropic) {
+      setTimeout(()=>go("data"), 800);
+    }
+  };
+};
+
+/* ──────────── Stage: Data ──────────── */
+PANELS.data = (el) => {
+  el.innerHTML = `
+    <h3>Load Dataset</h3>
+    <div class="drop" id="drop">
+      <div>📄 Drop CSV / XLSX here</div>
+      <div class="muted" style="margin-top:4px">or click to browse</div>
+      <input id="file-input" type="file" accept=".csv,.xlsx,.xls" style="display:none"/>
+    </div>
+
+    <h4>Or connect Google Sheets</h4>
+    <div class="field">
+      <label>Sheet ID or URL</label>
+      <input id="sheet-url" type="text" placeholder="https://docs.google.com/spreadsheets/d/.../edit"/>
+    </div>
+    <div class="row">
+      <button class="btn sec" id="btn-gauth">${state.google.token?'✓ Connected':'Connect Google'}</button>
+      <button class="btn" id="btn-gload" ${state.google.token?'':'disabled'}>Load Sheet</button>
+    </div>
+    <div class="muted" id="gsheet-msg" style="margin-top:6px"></div>
+
+    ${state.data.rows.length ? `
+      <hr/>
+      <h4>Current Dataset</h4>
+      <div class="card">
+        <div class="kv">
+          <div>Source</div><div>${state.data.fileName || state.data.sheetName || '—'}</div>
+          <div>Rows</div><div>${state.data.rows.length}</div>
+          <div>Columns</div><div>${state.data.cols.length}</div>
+        </div>
+      </div>
+
+      <h4>Role Columns (auto-detected)</h4>
+      <div class="field"><label>Company name column</label>
+        <select id="col-name">${state.data.cols.map(c=>`<option value="${c}"${c===state.sel.nameCol?' selected':''}>${c}</option>`).join('')}</select></div>
+      <div class="field"><label>Domain / Website column</label>
+        <select id="col-dom"><option value="">—</option>${state.data.cols.map(c=>`<option value="${c}"${c===state.sel.domainCol?' selected':''}>${c}</option>`).join('')}</select></div>
+      <div class="field"><label>LinkedIn URL column</label>
+        <select id="col-li"><option value="">—</option>${state.data.cols.map(c=>`<option value="${c}"${c===state.sel.linkedinCol?' selected':''}>${c}</option>`).join('')}</select></div>
+      ${actionBar({ startId:"btn-data-next", startLabel:"Continue to Ask Claude", saveLabel:"💾 Save Progress" })}
+    ` : ''}
+  `;
+
+  // File upload
+  const drop = $("drop");
+  const fi = $("file-input");
+  drop.onclick = () => fi.click();
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+  drop.ondragleave = () => drop.classList.remove("over");
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); };
+  fi.onchange = (e) => e.target.files[0] && loadFile(e.target.files[0]);
+
+  $("btn-gauth").onclick = googleAuth;
+  $("btn-gload").onclick = loadGoogleSheet;
+
+  if (state.data.rows.length) {
+    $("col-name").onchange = (e) => state.sel.nameCol = e.target.value;
+    $("col-dom").onchange = (e) => state.sel.domainCol = e.target.value;
+    $("col-li").onchange = (e) => state.sel.linkedinCol = e.target.value;
+    $("btn-data-next").onclick = () => { state.stageDone.add("data"); renderRail(); go("ask"); };
+    wireSaveBtn("Data");
+  }
+};
+
+async function loadFile(file) {
+  setStatus("Parsing " + file.name, "run");
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: "array" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+  loaded({ rows, fileName: file.name });
+}
+
+function loaded({ rows, fileName, sheetId, sheetName }) {
+  if (!rows.length) { setStatus("Empty file", "err"); return; }
+  state.data.rows = rows;
+  state.data.cols = Object.keys(rows[0]);
+  state.data.fileName = fileName || null;
+  state.data.sheetId = sheetId || null;
+  state.data.sheetName = sheetName || null;
+  // Auto-detect role columns
+  const lc = state.data.cols.map(c => c.toLowerCase());
+  const pick = (...needles) => {
+    for (const n of needles) {
+      const i = lc.findIndex(c => c === n || c.includes(n));
+      if (i >= 0) return state.data.cols[i];
+    }
+    return null;
+  };
+  state.sel.nameCol = pick("name","company");
+  state.sel.domainCol = pick("domain","website","url");
+  state.sel.linkedinCol = pick("linkedin","linkedin url","linkedin_url");
+  state.stageDone.add("data");
+  setStatus("Loaded " + rows.length + " rows", "ok");
+  toast(`Loaded ${rows.length} rows · ${state.data.cols.length} columns`, "ok");
+  setCrumb();
+  renderTable();
+  renderRail();
+  renderPanel();
+}
+
+/* ──── Google OAuth + Sheets ──── */
+function googleAuth() {
+  if (!state.keys.googleClientId) { $("gsheet-msg").innerHTML = '<span class="pill err">Set Google Client ID in Keys stage first</span>'; return; }
+  if (!window.google) { $("gsheet-msg").innerHTML = '<span class="pill err">GIS script still loading…</span>'; return; }
+  const tc = google.accounts.oauth2.initTokenClient({
+    client_id: state.keys.googleClientId,
+    scope: "https://www.googleapis.com/auth/spreadsheets",
+    callback: (resp) => {
+      if (resp.access_token) {
+        state.google.token = resp.access_token;
+        state.google.expires = Date.now() + (resp.expires_in * 1000) - 60000;
+        $("gsheet-msg").innerHTML = '<span class="pill ok">Google connected</span>';
+        renderPanel();
+        $("btn-push-sheet").disabled = false;
+      } else {
+        $("gsheet-msg").innerHTML = '<span class="pill err">Auth failed</span>';
+      }
+    },
+  });
+  tc.requestAccessToken();
+}
+
+function parseSheetId(input) {
+  const m = input.match(/\/d\/([A-Za-z0-9_-]+)/);
+  return m ? m[1] : input.trim();
+}
+
+async function loadGoogleSheet() {
+  const url = $("sheet-url").value.trim();
+  if (!url) return;
+  const sid = parseSheetId(url);
+  setStatus("Loading Google Sheet…", "run");
+  try {
+    const meta = await gFetch(`https://sheets.googleapis.com/v4/spreadsheets/${sid}?fields=sheets.properties.title,properties.title`);
+    const title = meta.properties.title;
+    const tab = meta.sheets[0].properties.title;
+    const vals = await gFetch(`https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/${encodeURIComponent(tab)}`);
+    const arr = vals.values || [];
+    if (!arr.length) throw new Error("Empty sheet");
+    const cols = arr[0];
+    const rows = arr.slice(1).map(r => { const o={}; cols.forEach((c,i)=>o[c]=r[i]||""); return o; });
+    loaded({ rows, sheetId: sid, sheetName: `${title} · ${tab}` });
+  } catch (e) {
+    setStatus("Sheet load failed", "err");
+    $("gsheet-msg").innerHTML = `<span class="pill err">${e.message}</span>`;
+  }
+}
+
+async function gFetch(url, opts={}) {
+  const r = await fetch(url, { ...opts, headers: { Authorization: "Bearer " + state.google.token, "Content-Type":"application/json", ...(opts.headers||{}) } });
+  if (!r.ok) throw new Error("Sheets API " + r.status + ": " + (await r.text()).slice(0,200));
+  return r.json();
+}
+
+
+/* ──────────── Stage: Ask Claude (unified NLP prompt) ────────────
+   One box. Claude routes the intent (per-row vs list-level) and executes.
+   Covers: hypothesis, classify, enrich, segment, score, any custom question.
+──────────────────────────────────────────────────────────────── */
+PANELS.ask = (el) => {
+  if (!state.data.rows.length) {
+    el.innerHTML = '<p class="muted">Load a dataset first.</p>';
+    return;
+  }
+  const last = state.gtm.lastAsk || {};
+  el.innerHTML = `
+    <h3>Ask Claude Anything</h3>
+    <p class="muted" style="margin-bottom:10px">One prompt. Claude figures out whether to answer per row (enrich / classify / segment / score) or once over the whole list (hypothesis / insights). Uses <code>web_search</code> automatically if your prompt needs it.</p>
+
+    <div class="field">
+      <label>Your instruction (natural language)</label>
+      <textarea id="ask-q" rows="5" placeholder="Examples:
+• Classify each company as Higher Education, School Education, Skilling, or Other
+• Score ICP fit 1-10 for a mid-market edtech buyer
+• Write a 1-sentence context summary for each company
+• Look up each company on the web and tell me if they raised funding in the last 12 months
+• Draft a GTM hypothesis for this list targeting CROs
+• Group these into 4 ICP tiers A/B/C/D with reasoning">${esc(last.q || "")}</textarea>
+    </div>
+
+    <div class="field">
+      <label>Feature columns to send as context</label>
+      <div class="chip-row" id="ask-feats"></div>
+    </div>
+
+    <div class="row">
+      <div class="field"><label>Mode</label>
+        <select id="ask-mode">
+          <option value="auto">Auto — Claude decides</option>
+          <option value="per_row">Per row — fill a new column</option>
+          <option value="list">Whole list — one answer (hypothesis/insight)</option>
+        </select>
+      </div>
+      <div class="field"><label>New column name (per-row mode)</label>
+        <input id="ask-col" type="text" value="${esc(last.col || "AI_Answer")}"/>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field"><label>Model</label>
+        <select id="ask-model">
+          <option value="${state.models.bulk}">${state.models.bulk} (fast)</option>
+          <option value="${state.models.reasoning}">${state.models.reasoning} (smart)</option>
+        </select>
+      </div>
+      <div class="field"><label>Concurrency</label>
+        <input id="ask-conc" type="number" value="10" min="1" max="50"/>
+      </div>
+    </div>
+
+    <div class="field">
+      <label><input type="checkbox" id="ask-web" ${last.web?'checked':''}/> Enable web_search (researches each company online)</label>
+    </div>
+
+    <button class="btn sec full" id="ask-preview">👁 Preview Prompt (row 1)</button>
+    <div id="ask-prev"></div>
+
+    <h4>Progress</h4>
+    <div id="ask-steps"></div>
+    <div id="ask-out"></div>
+    ${actionBar({ startId:"ask-run", startLabel:"Ask Claude" })}
+  `;
+
+  renderFeatureChips("ask-feats");
+  renderSteps("ask-steps", [
+    { label:"Decide mode (per-row vs list-level)" },
+    { label:"Build prompt from features + question" },
+    { label:"Call Claude" + (last.web ? " (with web_search)" : "") },
+    { label:"Write result" },
+  ]);
+  if (last.mode) $("ask-mode").value = last.mode;
+  $("ask-preview").onclick = () => {
+    const p = buildAskPrompt(state.data.rows[0]);
+    $("ask-prev").innerHTML = `<div class="preview">${esc(p)}</div>`;
+  };
+  $("ask-run").onclick = runAsk;
+  wireSaveBtn("Ask");
+};
+
+function buildAskPrompt(row, overrideQ) {
+  const q = overrideQ != null ? overrideQ : $("ask-q").value.trim();
+  const feats = state.sel.features.length ? state.sel.features : state.data.cols.slice(0, 6);
+  const data = feats.map(f => `- ${f}: ${String(row[f]||'N/A').slice(0,500)}`).join("\n");
+  return `Company Data:\n${data}\n\nInstruction: ${q}`;
+}
+
+async function decideMode(question) {
+  // Tiny router call — Haiku tells us per_row vs list in <1s
+  const text = await anthropicCall(
+    state.models.bulk,
+    "Return exactly one word: PER_ROW if the instruction should be applied to EACH row (classify, score, enrich, look up, summarize each), or LIST if it should be applied ONCE over the whole dataset (hypothesis, overall insight, schema, strategy).",
+    `Instruction: ${question}\n\nOne word answer: PER_ROW or LIST`,
+    15
+  );
+  return text.toUpperCase().includes("LIST") ? "list" : "per_row";
+}
+
+async function runAsk() {
+  if (!state.keys.anthropic) { toast("Anthropic key required", "err"); return; }
+  const q = $("ask-q").value.trim();
+  if (!q) { toast("Type your instruction", "err"); return; }
+
+  const col = $("ask-col").value.trim() || "AI_Answer";
+  const model = $("ask-model").value;
+  const conc = parseInt($("ask-conc").value) || 10;
+  const web = $("ask-web").checked;
+  let mode = $("ask-mode").value;
+
+  toast("Running Claude…", "info");
+  updateStep("ask-steps", 0, "run");
+
+  // Auto-route if needed
+  if (mode === "auto") {
+    try { mode = await decideMode(q); }
+    catch(e) { mode = "per_row"; }
+    toast(`Mode: ${mode === "list" ? "whole list" : "per row"}`, "info");
+  }
+  updateStep("ask-steps", 0, "done");
+  updateStep("ask-steps", 1, "run");
+
+  state.gtm.lastAsk = { q, col, mode, web };
+
+  const tools = web ? [{ type:"web_search_20250305", name:"web_search" }] : null;
+  const system = mode === "list"
+    ? "You are a senior GTM strategist. Analyze the provided sample and answer the user's instruction in structured plain text. Be specific, not generic."
+    : "You are a senior GTM research analyst. Answer the instruction concisely for this one company. If data insufficient, respond exactly: Insufficient data.";
+
+  if (mode === "list") {
+    // Run ONCE on a sample of the list
+    updateStep("ask-steps", 1, "done");
+    updateStep("ask-steps", 2, "run");
+    const sample = state.data.rows.slice(0, 25).map(r => {
+      const o = {};
+      (state.sel.features.length ? state.sel.features : state.data.cols.slice(0,8))
+        .forEach(f => o[f] = String(r[f]||'').slice(0,150));
+      return o;
+    });
+    const prompt = `Instruction: ${q}\n\nSample rows (up to 25):\n${JSON.stringify(sample, null, 2)}\n\nFull dataset: ${state.data.rows.length} rows. Available columns: ${state.data.cols.join(", ")}`;
+    showProg("Claude thinking…", 1);
+    try {
+      const text = await anthropicCall(model, system, prompt, 1500, tools);
+      $("ask-out").innerHTML = `<div class="card"><pre style="white-space:pre-wrap;font-family:inherit;font-size:12px">${esc(text)}</pre></div>`;
+      updateStep("ask-steps", 2, "done");
+      updateStep("ask-steps", 3, "done");
+      state.stageDone.add("ask");
+      renderRail();
+      toast("Answer ready", "ok");
+    } catch(e) { toast("Failed: "+e.message, "err"); }
+    hideProg();
+    return;
+  }
+
+  // Per-row mode
+  if (!state.data.cols.includes(col)) state.data.cols.push(col);
+  renderTable();
+  updateStep("ask-steps", 1, "done");
+  updateStep("ask-steps", 2, "run");
+
+  const rows = state.data.rows;
+  showProg("Running per-row…", rows.length);
+  state.running = true;
+  await pool(rows, conc, async (row, idx) => {
+    if (!state.running) return;
+    try {
+      const prompt = buildAskPrompt(row, q);
+      const ans = await anthropicCall(model, system, prompt, web ? 1024 : 300, tools);
+      row[col] = ans;
+      markCell(idx, col);
+    } catch(e) { row[col] = "[ERR] " + e.message.slice(0,80); }
+    tickProg();
+  });
+  state.running = false;
+  state.stageDone.add("ask");
+  updateStep("ask-steps", 2, "done");
+  updateStep("ask-steps", 3, "done");
+  renderRail();
+  hideProg();
+  setStatus("Done", "ok");
+  toast(`Answered ${rows.length} rows → "${col}"`, "ok");
+}
+
+
+/* ──────────── Stage: People (Apify) ──────────── */
+PANELS.people = (el) => {
+  if (!state.data.rows.length) { el.innerHTML = '<p class="muted">Load a dataset first.</p>'; return; }
+  el.innerHTML = `
+    <h3>Find People (Apify)</h3>
+    <p class="muted">LinkedIn Company Employees Scraper + Leads Finder fallback. Writes <code>Person1..3_Name/Title/LinkedIn/Email/Phone</code>.</p>
+    <div class="field"><label>LinkedIn URL column</label>
+      <select id="pp-li">${state.data.cols.map(c=>`<option${c===state.sel.linkedinCol?' selected':''}>${c}</option>`).join('')}</select>
+    </div>
+    <div class="field"><label>Company name column</label>
+      <select id="pp-name">${state.data.cols.map(c=>`<option${c===state.sel.nameCol?' selected':''}>${c}</option>`).join('')}</select>
+    </div>
+    <div class="field"><label>Domain column</label>
+      <select id="pp-dom"><option value="">—</option>${state.data.cols.map(c=>`<option${c===state.sel.domainCol?' selected':''}>${c}</option>`).join('')}</select>
+    </div>
+    <div class="row">
+      <div class="field"><label>Max people / company</label><input id="pp-max" type="number" value="3" min="1" max="10"/></div>
+      <div class="field"><label>Parallel companies</label><input id="pp-conc" type="number" value="3" min="1" max="10"/></div>
+    </div>
+    <div class="muted" style="margin-top:8px">⚠ Apify polling can take ~30–90s per company. Start small.</div>
+    <h4>Progress</h4>
+    <div id="pp-steps"></div>
+    ${actionBar({ startId:"pp-run", startLabel:"Start People Search" })}
+  `;
+  renderSteps("pp-steps", [
+    { label:"Validate Apify token" },
+    { label:"Add person columns" },
+    { label:"Run Apify actors per company" },
+    { label:"Finalize" },
+  ]);
+  $("pp-run").onclick = runPeople;
+  wireSaveBtn("People");
+};
+
+async function runPeople() {
+  if (!state.keys.apify) { toast("Apify token required", "err"); return; }
+  updateStep("pp-steps", 0, "done");
+  toast("People search started", "info");
+  const liCol = $("pp-li").value, nmCol = $("pp-name").value, dmCol = $("pp-dom").value;
+  const maxP = parseInt($("pp-max").value)||3;
+  const conc = parseInt($("pp-conc").value)||3;
+  const rows = state.data.rows;
+  for (let i=1;i<=maxP;i++) for (const f of ["Name","Title","LinkedIn","Email","Phone"]) {
+    const c = `Person${i}_${f}`;
+    if (!state.data.cols.includes(c)) state.data.cols.push(c);
+  }
+  renderTable();
+  updateStep("pp-steps", 1, "done");
+  updateStep("pp-steps", 2, "run");
+  showProg("Finding people via Apify…", rows.length);
+  state.running = true;
+  await pool(rows, conc, async (row, idx) => {
+    if (!state.running) return;
+    let liUrl = String(row[liCol]||"").trim();
+    if (liUrl && !liUrl.startsWith("http")) liUrl = "https://"+liUrl;
+    let people = [];
+    try {
+      if (liUrl) people = await apifyLinkedIn(liUrl, maxP);
+      if (!people.length && row[nmCol]) people = await apifyLeadsFinder(row[nmCol], row[dmCol]||"", maxP);
+    } catch(e) { log(`#${idx+1} ${e.message}`, "err"); }
+    people.slice(0,maxP).forEach((p,i) => {
+      row[`Person${i+1}_Name`]=p.name||""; row[`Person${i+1}_Title`]=p.title||"";
+      row[`Person${i+1}_LinkedIn`]=p.linkedin_url||""; row[`Person${i+1}_Email`]=p.email||"";
+      row[`Person${i+1}_Phone`]=p.phone||"";
+      markCell(idx, `Person${i+1}_Name`);
+    });
+    log(`#${idx+1} ${row[nmCol]||''} → ${people.length} people`, people.length?"ok":"info");
+    tickProg();
+  });
+  state.running = false;
+  state.stageDone.add("people");
+  updateStep("pp-steps", 2, "done");
+  updateStep("pp-steps", 3, "done");
+  renderRail();
+  hideProg();
+  setStatus("People search done", "ok");
+  toast(`Found people for ${rows.length} companies`, "ok");
+}
+
+async function apifyLinkedIn(url, max) {
+  const actor = "george.the.developer~linkedin-company-employees-scraper";
+  return await apifyRun(actor, { companyUrls:[url], maxEmployees:max, outputType:"fullWithEmail" }, max);
+}
+async function apifyLeadsFinder(name, domain, max) {
+  const actor = "code_crafter~leads-finder";
+  return await apifyRun(actor, { company:name, domain:domain||"", limit:max }, max);
+}
+async function apifyRun(actor, input, max) {
+  const token = state.keys.apify;
+  const start = await fetch(`https://api.apify.com/v2/acts/${actor}/runs?token=${token}`, {
+    method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(input)
+  });
+  if (!start.ok) throw new Error("apify start "+start.status);
+  const { data } = await start.json();
+  // Poll
+  for (let i=0;i<40;i++) {
+    await sleep(5000);
+    const s = await fetch(`https://api.apify.com/v2/actor-runs/${data.id}?token=${token}`);
+    if (!s.ok) continue;
+    const sj = await s.json();
+    if (["SUCCEEDED","FAILED","ABORTED","TIMED-OUT"].includes(sj.data.status)) {
+      if (sj.data.status !== "SUCCEEDED") return [];
+      break;
+    }
+  }
+  const items = await (await fetch(`https://api.apify.com/v2/datasets/${data.defaultDatasetId}/items?token=${token}&limit=${max}`)).json();
+  return items.slice(0,max).map(it => ({
+    name: it.fullName || it.name || `${it.first_name||""} ${it.last_name||""}`.trim(),
+    title: it.title || it.headline || it.jobTitle || it.job_title || "",
+    linkedin_url: it.linkedInUrl || it.linkedinUrl || it.profileUrl || it.url || it.linkedin_url || it.linkedin || "",
+    email: it.email || it.emailAddress || it.work_email || it.personal_email || "",
+    phone: it.phone || it.phoneNumber || it.phone_number || it.mobile || "",
+    location: it.location || it.city || "",
+  })).filter(p => p.name);
+}
+
+/* ──────────── Stage: Enrich ──────────── */
+
+/* ──────────── Stage: Export ──────────── */
+PANELS.export = (el) => {
+  if (!state.data.rows.length) { el.innerHTML = '<p class="muted">Nothing to export.</p>'; return; }
+  el.innerHTML = `
+    <h3>Export Results</h3>
+    <div class="row">
+      <button class="btn full" id="ex-csv">↓ Download CSV</button>
+      <button class="btn full" id="ex-xlsx">↓ Download XLSX</button>
+    </div>
+    <hr/>
+    <h4>Push to Google Sheet</h4>
+    <div class="field"><label>Target Sheet URL or ID (blank = same one you loaded)</label>
+      <input id="ex-sid" type="text" placeholder="${state.data.sheetId||'leave blank'}"/></div>
+    <div class="field"><label>Tab name (new tab if not exists)</label>
+      <input id="ex-tab" type="text" value="Enriched"/></div>
+    <button class="btn full" id="ex-sheet" ${state.google.token?'':'disabled'}>${state.google.token?'↑ Write to Sheet':'Connect Google in Keys stage first'}</button>
+    <div class="muted" id="ex-msg" style="margin-top:6px"></div>
+    ${actionBar({ saveLabel:"💾 Save Final Snapshot" })}
+  `;
+  $("ex-csv").onclick = downloadCSV;
+  $("ex-xlsx").onclick = downloadXLSX;
+  $("ex-sheet").onclick = pushToSheet;
+  wireSaveBtn("Final");
+};
+
+function toCSV() {
+  const cols = state.data.cols;
+  const esc = (v) => { v = String(v==null?"":v); return /[",\n]/.test(v) ? `"${v.replace(/"/g,'""')}"` : v; };
+  return [cols.map(esc).join(","), ...state.data.rows.map(r => cols.map(c=>esc(r[c])).join(","))].join("\n");
+}
+function downloadCSV() {
+  const blob = new Blob([toCSV()], {type:"text/csv"});
+  dl(blob, (state.data.fileName||"gtm_master")+"_enriched.csv");
+}
+function downloadXLSX() {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(state.data.rows, { header: state.data.cols });
+  XLSX.utils.book_append_sheet(wb, ws, "Enriched");
+  XLSX.writeFile(wb, (state.data.fileName||"gtm_master")+"_enriched.xlsx");
+}
+function dl(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+}
+
+async function pushToSheet() {
+  if (!state.google.token) return alert("Connect Google first in Keys stage");
+  const sid = $("ex-sid").value.trim() ? parseSheetId($("ex-sid").value) : state.data.sheetId;
+  const tab = $("ex-tab").value.trim() || "Enriched";
+  if (!sid) return alert("No Sheet ID");
+  try {
+    // Ensure tab exists
+    const meta = await gFetch(`https://sheets.googleapis.com/v4/spreadsheets/${sid}?fields=sheets.properties`);
+    const hasTab = meta.sheets.some(s => s.properties.title === tab);
+    if (!hasTab) {
+      await gFetch(`https://sheets.googleapis.com/v4/spreadsheets/${sid}:batchUpdate`, {
+        method:"POST", body: JSON.stringify({ requests:[{ addSheet:{ properties:{ title: tab }}}] })
+      });
+    }
+    // Clear + write
+    await gFetch(`https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/${encodeURIComponent(tab)}:clear`, { method:"POST", body:"{}" });
+    const values = [state.data.cols, ...state.data.rows.map(r => state.data.cols.map(c => r[c]==null?"":String(r[c])))];
+    await gFetch(`https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/${encodeURIComponent(tab)}?valueInputOption=RAW`, {
+      method:"PUT", body: JSON.stringify({ values })
+    });
+    $("ex-msg").innerHTML = `<span class="pill ok">Wrote ${state.data.rows.length} rows to "${tab}"</span>`;
+    state.stageDone.add("export");
+    renderRail();
+  } catch(e) { $("ex-msg").innerHTML = `<span class="pill err">${e.message}</span>`; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Shared: feature chips, prompt preview, table, progress, pool
+═══════════════════════════════════════════════════════════════ */
+function renderFeatureChips(id) {
+  const el = $(id);
+  if (!el) return;
+  el.innerHTML = state.data.cols.map(c => `<div class="chip${state.sel.features.includes(c)?' on':''}" data-c="${c}">${c}</div>`).join("");
+  el.querySelectorAll(".chip").forEach(ch => {
+    ch.onclick = () => {
+      const c = ch.dataset.c;
+      const i = state.sel.features.indexOf(c);
+      if (i>=0) state.sel.features.splice(i,1); else state.sel.features.push(c);
+      ch.classList.toggle("on");
+    };
+  });
+}
+
+function renderTable() {
+  const wrap = $("table-wrap");
+  const d = state.data;
+  if (!d.rows.length) { wrap.innerHTML = '<div class="empty"><div class="empty-title">👋 Load a dataset</div></div>'; return; }
+  const maxRows = 500;
+  const shown = d.rows.slice(0, maxRows);
+  let html = "<table><thead><tr>" + d.cols.map(c=>`<th>${esc(c)}</th>`).join("") + "</tr></thead><tbody>";
+  shown.forEach((r,i) => {
+    html += `<tr data-idx="${i}">` + d.cols.map(c => `<td data-col="${esc(c)}">${esc(String(r[c]==null?'':r[c]).slice(0,300))}</td>`).join("") + "</tr>";
+  });
+  html += "</tbody></table>";
+  if (d.rows.length > maxRows) html += `<div class="muted" style="padding:10px">(showing first ${maxRows} of ${d.rows.length} rows)</div>`;
+  wrap.innerHTML = html;
+  setCrumb();
+}
+
+function markCell(rowIdx, colName) {
+  if (rowIdx >= 500) return;
+  const tr = document.querySelector(`tr[data-idx="${rowIdx}"]`);
+  if (!tr) return;
+  const td = tr.querySelector(`td[data-col="${colName.replace(/"/g,'\\"')}"]`);
+  if (td) {
+    td.classList.add("added");
+    td.textContent = String(state.data.rows[rowIdx][colName]||"").slice(0,300);
+  } else {
+    // new column — just refresh header row
+    renderTable();
+  }
+}
+
+function showProg(label, total) {
+  state.progress = { done:0, total, errs:0, t0: Date.now() };
+  $("prog-wrap").classList.add("on");
+  $("prog-label").innerHTML = `${label} <button class="btn sm" style="background:var(--err);color:#fff;margin-left:8px" onclick="state.running=false;toast('Stopping…','err')">■ Stop</button>`;
+  $("prog-pct").textContent = `0 / ${total}`;
+  $("prog-fill").style.width = "0%";
+  $("prog-log").innerHTML = "";
+  setStatus(label, "run");
+}
+function tickProg() {
+  state.progress.done++;
+  const { done, total } = state.progress;
+  $("prog-pct").textContent = `${done} / ${total}`;
+  $("prog-fill").style.width = (done/total*100).toFixed(1)+"%";
+}
+function hideProg() {
+  setTimeout(()=>$("prog-wrap").classList.remove("on"), 1500);
+}
+
+async function pool(items, n, fn) {
+  let i = 0;
+  const workers = Array.from({length:Math.min(n,items.length)}, async () => {
+    while (i < items.length) {
+      const idx = i++;
+      await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Anthropic API call — single helper used everywhere
+═══════════════════════════════════════════════════════════════ */
+async function anthropicCall(model, system, userPrompt, maxTokens=300, tools=null) {
+  if (!state.keys.anthropic) throw new Error("no anthropic key");
+  const body = {
+    model, max_tokens: maxTokens, temperature: 0.15,
+    system, messages: [{ role:"user", content: userPrompt }]
+  };
+  if (tools) body.tools = tools;
+  for (let attempt=0; attempt<4; attempt++) {
+    try {
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",
+        headers:{
+          "x-api-key": state.keys.anthropic,
+          "anthropic-version":"2023-06-01",
+          "anthropic-dangerous-direct-browser-access":"true",
+          "Content-Type":"application/json"
+        },
+        body: JSON.stringify(body)
+      });
+      if (r.status === 429 || r.status >= 500) {
+        await sleep(1000 * Math.pow(2, attempt));
+        continue;
+      }
+      if (!r.ok) throw new Error("HTTP "+r.status+" "+(await r.text()).slice(0,150));
+      const d = await r.json();
+      const text = (d.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
+      return text;
+    } catch(e) {
+      if (attempt===3) throw e;
+      await sleep(1000 * Math.pow(2, attempt));
+    }
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Helpers
+═══════════════════════════════════════════════════════════════ */
+function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+/* ═══════════════════════════════════════════════════════════════
+   Top-bar download + reset
+═══════════════════════════════════════════════════════════════ */
+$("btn-download-csv").onclick = () => state.data.rows.length && downloadCSV();
+$("btn-download-xlsx").onclick = () => state.data.rows.length && downloadXLSX();
+$("btn-push-sheet").onclick = () => go("export");
+$("btn-reset").onclick = () => {
+  if (confirm("Clear keys and session?")) { localStorage.removeItem(LS); location.reload(); }
+};
+
+/* ═══════════════════════════════════════════════════════════════
+   Boot
+═══════════════════════════════════════════════════════════════ */
+renderRail();
+renderPanel();
+
+// Offer to restore prior snapshot if one exists
+if (localStorage.getItem(LS + "_progress") && !state.data.rows.length) {
+  setTimeout(() => {
+    if (confirm("Restore your last saved progress snapshot?")) loadProgress();
+  }, 400);
+}
+
+setStatus(state.keys.anthropic ? "Keys loaded — load a dataset" : "Set your Anthropic key to begin");
+</script>
+</body>
+</html>
