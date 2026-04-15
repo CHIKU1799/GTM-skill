@@ -75,7 +75,9 @@ import pandas as pd
 #  CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 OPENAI_URL    = "https://api.openai.com/v1/chat/completions"
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 MODEL         = "gpt-4o-mini"
+ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 CONCURRENCY   = 50       # parallel in-flight requests
 MAX_RETRIES   = 5
 BACKOFF_BASE  = 1.0      # seconds, doubles each retry
@@ -182,6 +184,47 @@ async def _call_openai(
     return (row_idx, "[ERROR] max retries exhausted")
 
 
+async def _call_anthropic(
+    session: aiohttp.ClientSession,
+    sem: asyncio.Semaphore,
+    row_idx: int,
+    prompt: str,
+    headers: dict,
+    model: str,
+    system_prompt: str,
+    max_tokens: int,
+) -> tuple:
+    """Fire one Anthropic Claude completion. Returns (row_index, response_text)."""
+    body = {
+        "model": model,
+        "temperature": TEMPERATURE,
+        "max_tokens": max_tokens,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    for attempt in range(MAX_RETRIES):
+        async with sem:
+            try:
+                async with session.post(
+                    ANTHROPIC_URL, headers=headers, json=body,
+                    timeout=aiohttp.ClientTimeout(total=TIMEOUT_SEC),
+                ) as r:
+                    if r.status == 200:
+                        d = await r.json()
+                        return (row_idx, d["content"][0]["text"].strip())
+                    if r.status == 429 or r.status >= 500:
+                        await asyncio.sleep(BACKOFF_BASE * 2**attempt)
+                        continue
+                    err = await r.text()
+                    return (row_idx, f"[ERROR:{r.status}] {err[:150]}")
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(BACKOFF_BASE * 2**attempt)
+                    continue
+                return (row_idx, f"[ERROR:TIMEOUT] {str(e)[:100]}")
+    return (row_idx, "[ERROR] max retries exhausted")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  PROGRESS BAR
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -219,22 +262,28 @@ async def _run_enrich(
     question: str,
     new_column: str,
     api_key: str,
-    model: str = MODEL,
+    api: str = "openai",
+    model: str = None,
     concurrency: int = CONCURRENCY,
     system_prompt: str = SYSTEM_PROMPT,
     max_tokens: int = MAX_RESP_TOK,
 ) -> pd.DataFrame:
     """Async core: build prompts → blast API → collect results → return df."""
+    if model is None:
+        model = ANTHROPIC_MODEL if api == "anthropic" else MODEL
     total = len(df)
 
     # ── Cost estimate ──
     avg_in = 120 + len(features) * 60   # tokens per row (rough)
     avg_out = 50
-    price_in, price_out = (0.15, 0.60) if "mini" in model else (2.50, 10.00)
+    if api == "anthropic":
+        price_in, price_out = (0.25, 1.25) if "haiku" in model else (3.00, 15.00)
+    else:
+        price_in, price_out = (0.15, 0.60) if "mini" in model else (2.50, 10.00)
     cost = (avg_in * total * price_in + avg_out * total * price_out) / 1e6
 
     print(f"\n  Enriching {total} rows", file=sys.stderr)
-    print(f"  Model: {model}  |  Concurrency: {concurrency}", file=sys.stderr)
+    print(f"  API: {api}  |  Model: {model}  |  Concurrency: {concurrency}", file=sys.stderr)
     print(f"  Features: {features}", file=sys.stderr)
     print(f"  Question: {question}", file=sys.stderr)
     print(f"  Est. cost: ~${cost:.2f}\n", file=sys.stderr)
@@ -245,7 +294,13 @@ async def _run_enrich(
         prompts.append((idx, build_row_prompt(row.to_dict(), features, question)))
 
     # ── Fire all requests ──
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    if api == "anthropic":
+        headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
+        caller = _call_anthropic
+    else:
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        caller = _call_openai
+
     sem = asyncio.Semaphore(concurrency)
     prog = Progress(total)
     results = {}
@@ -253,7 +308,7 @@ async def _run_enrich(
     conn = aiohttp.TCPConnector(limit=concurrency + 10, ttl_dns_cache=300)
     async with aiohttp.ClientSession(connector=conn) as session:
         tasks = [
-            _call_openai(session, sem, idx, p, headers, model, system_prompt, max_tokens)
+            caller(session, sem, idx, p, headers, model, system_prompt, max_tokens)
             for idx, p in prompts
         ]
         for coro in asyncio.as_completed(tasks):
@@ -274,7 +329,8 @@ def enrich_dataframe(
     features: list[str],
     new_column: str,
     api_key: str,
-    model: str = MODEL,
+    api: str = "openai",
+    model: str = None,
     concurrency: int = CONCURRENCY,
     system_prompt: str = SYSTEM_PROMPT,
     max_tokens: int = MAX_RESP_TOK,
@@ -286,19 +342,20 @@ def enrich_dataframe(
         from enrich_column import enrich_dataframe
         import pandas as pd
 
-        df = pd.read_csv("edtech.csv")
+        df = pd.read_csv("companies.csv")
         df = enrich_dataframe(
             df=df,
-            question="Is this firm into Higher Education or School Education?",
-            features=["Name", "Description", "Education Category", "Education Level"],
-            new_column="Education_Type",
+            question="Classify this company's primary market segment.",
+            features=["Name", "Description", "Industry"],
+            new_column="Segment",
             api_key="sk-...",
+            api="openai",  # or "anthropic"
         )
-        df.to_csv("edtech_enriched.csv", index=False)
+        df.to_csv("enriched.csv", index=False)
     """
     return asyncio.run(
         _run_enrich(df, features, question, new_column, api_key,
-                    model, concurrency, system_prompt, max_tokens)
+                    api, model, concurrency, system_prompt, max_tokens)
     )
 
 
@@ -342,8 +399,9 @@ def main():
     p.add_argument("-q", "--question",   required=True, help="Question for each row")
     p.add_argument("-f", "--features",   required=True, help="Comma-sep feature columns")
     p.add_argument("-c", "--new-column", required=True, help="New column name")
-    p.add_argument("-k", "--api-key",    default=None,  help="OpenAI key (or OPENAI_API_KEY env)")
-    p.add_argument("-m", "--model",      default=MODEL, help=f"Model (default: {MODEL})")
+    p.add_argument("-k", "--api-key",    default=None,  help="API key (or OPENAI_API_KEY / ANTHROPIC_API_KEY env)")
+    p.add_argument("--api",             choices=["openai","anthropic"], default="openai", help="API provider")
+    p.add_argument("-m", "--model",      default=None,  help="Model (auto-selected per provider if omitted)")
     p.add_argument("-n", "--concurrency",type=int, default=CONCURRENCY, help="Parallel calls")
     p.add_argument("-s", "--system-prompt", default=SYSTEM_PROMPT, help="Custom system prompt")
     p.add_argument("--max-tokens",       type=int, default=MAX_RESP_TOK)
@@ -387,14 +445,15 @@ def main():
         return
 
     # ── API key ──
-    api_key = args.api_key or os.environ.get("OPENAI_API_KEY")
+    env_key = "ANTHROPIC_API_KEY" if args.api == "anthropic" else "OPENAI_API_KEY"
+    api_key = args.api_key or os.environ.get(env_key)
     if not api_key:
-        sys.exit("ERROR: Pass --api-key or set OPENAI_API_KEY env var")
+        sys.exit(f"ERROR: Pass --api-key or set {env_key} env var")
 
     # ── Enrich ──
     df = enrich_dataframe(
         df, args.question, features, args.new_column,
-        api_key, args.model, args.concurrency, args.system_prompt, args.max_tokens,
+        api_key, args.api, args.model, args.concurrency, args.system_prompt, args.max_tokens,
     )
 
     # ── Merge retries ──

@@ -22,8 +22,11 @@ USAGE:
         --crawl                 # enable website crawling
 """
 
+from __future__ import annotations
+
 import argparse, asyncio, os, sys, time, re, html
 from pathlib import Path
+from typing import Optional
 from urllib.parse import urlparse
 
 def _install(pkg):

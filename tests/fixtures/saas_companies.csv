@@ -1,0 +1,11 @@
+Name,Description,Domain,Industry,Employees,Funding,Product
+Slack,Slack is a business communication platform offering real-time messaging and file sharing for teams. Used by enterprises worldwide for async collaboration.,slack.com,Communication,3500,1.4B Series H,Team Messaging
+Notion,Notion is an all-in-one workspace combining notes docs wikis and project management. Popular with startups and remote teams.,notion.so,Productivity,800,275M Series C,Workspace
+Figma,Figma is a collaborative interface design tool that runs in the browser. Acquired by Adobe for $20B then deal cancelled.,figma.com,Design,1000,330M Series E,Design Tool
+Linear,Linear is a project management tool built for software teams. Known for speed and keyboard-first UX.,linear.app,Project Management,80,52M Series B,Issue Tracking
+Vercel,Vercel is a cloud platform for frontend developers providing hosting and serverless functions. Created Next.js framework.,vercel.com,Developer Tools,450,250M Series D,Cloud Hosting
+Airtable,Airtable is a low-code platform for building collaborative apps. Combines spreadsheet simplicity with database power.,airtable.com,Low-Code,1200,735M Series F,App Platform
+Loom,Loom is an async video messaging tool for work. Record screen and camera then share instantly via link.,loom.com,Communication,200,200M Series C,Video Messaging
+Retool,Retool lets teams build internal tools fast with drag-and-drop components connected to any database or API.,retool.com,Developer Tools,350,245M Series C,Internal Tools
+Calendly,Calendly is a scheduling automation platform that eliminates back-and-forth emails for booking meetings.,calendly.com,Productivity,700,350M Series B,Scheduling
+Datadog,Datadog is a monitoring and analytics platform for cloud-scale applications. Provides full-stack observability.,datadog.com,Observability,5000,IPO Public,Monitoring
