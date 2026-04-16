@@ -404,10 +404,18 @@ PANELS.keys = (el) => {
     <div class="field">
       <label>Anthropic API Key <span class="pill ${state.keys.anthropic?'ok':'warn'}">${state.keys.anthropic?'set':'missing'}</span></label>
       <input id="k-anth" type="password" placeholder="sk-ant-api03-..." value="${state.keys.anthropic}"/>
+      <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+        <button class="btn sec sm" id="k-test-anth">🧪 Test Key</button>
+        <span id="k-test-anth-result" class="muted"></span>
+      </div>
     </div>
     <div class="field">
       <label>Apify Token <span class="pill ${state.keys.apify?'ok':'warn'}">${state.keys.apify?'set':'missing'}</span></label>
       <input id="k-apify" type="password" placeholder="apify_api_..." value="${state.keys.apify}"/>
+      <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+        <button class="btn sec sm" id="k-test-apify">🧪 Test Token</button>
+        <span id="k-test-apify-result" class="muted"></span>
+      </div>
     </div>
     <div class="field">
       <label>Google OAuth Client ID <span class="pill ${state.keys.googleClientId?'ok':'warn'}">${state.keys.googleClientId?'set':'optional'}</span></label>
@@ -442,6 +450,51 @@ PANELS.keys = (el) => {
   if (state.keys.anthropic) {
     $("k-saved-inline").innerHTML = `<span class="pill ok">✓ Keys already saved — will persist across reloads</span>`;
   }
+
+  async function pingProvider({ resultEl, fetcher }) {
+    resultEl.textContent = "… pinging";
+    resultEl.style.color = "";
+    try {
+      const { ok, statusText, sample } = await fetcher();
+      resultEl.innerHTML = ok
+        ? `✅ <b>Valid</b>${sample ? " · "+esc(sample) : ""}`
+        : `❌ <b>${esc(statusText)}</b>`;
+      resultEl.style.color = ok ? "var(--good)" : "var(--err)";
+    } catch(e) {
+      resultEl.innerHTML = `❌ <b>${esc(e.message)}</b>`;
+      resultEl.style.color = "var(--err)";
+    }
+  }
+  $("k-test-anth").onclick = () => pingProvider({
+    resultEl: $("k-test-anth-result"),
+    fetcher: async () => {
+      const key = $("k-anth").value.trim();
+      if (!key) return { ok:false, statusText:"Paste a key first" };
+      // Cheapest validity check: a 1-token ping to Haiku
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",
+        headers:{ "x-api-key": key, "anthropic-version":"2023-06-01", "content-type":"application/json" },
+        body: JSON.stringify({ model: state.models.bulk, max_tokens: 1, messages:[{role:"user",content:"ok"}] }),
+      });
+      if (r.status === 401 || r.status === 403) return { ok:false, statusText:`HTTP ${r.status} — key invalid` };
+      if (!r.ok) {
+        const t = (await r.text()).slice(0,120);
+        return { ok:false, statusText:`HTTP ${r.status} ${t}` };
+      }
+      return { ok:true, sample:"auth OK" };
+    }
+  });
+  $("k-test-apify").onclick = () => pingProvider({
+    resultEl: $("k-test-apify-result"),
+    fetcher: async () => {
+      const token = $("k-apify").value.trim();
+      if (!token) return { ok:false, statusText:"Paste a token first" };
+      const r = await fetch(`https://api.apify.com/v2/users/me?token=${encodeURIComponent(token)}`);
+      if (!r.ok) return { ok:false, statusText:`HTTP ${r.status}` };
+      const d = await r.json();
+      return { ok:true, sample: `user=${d.data?.username||"?"}` };
+    }
+  });
 
   $("k-save").onclick = () => {
     const prevAnth = state.keys.anthropic;
@@ -672,6 +725,7 @@ PANELS.ask = (el) => {
       </div>
       <div class="field"><label>New column name (per-row mode)</label>
         <input id="ask-col" type="text" value="${esc(last.col || "AI_Answer")}"/>
+        <button class="btn ghost sm" id="ask-suggest-cols" style="margin-top:6px">✨ Auto-suggest columns from my prompt</button>
       </div>
     </div>
 
@@ -694,6 +748,13 @@ PANELS.ask = (el) => {
     <button class="btn sec full" id="ask-preview">👁 Preview Prompt (row 1)</button>
     <div id="ask-prev"></div>
 
+    <h4>Quick Tools (no API cost)</h4>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+      <button class="btn ghost sm" id="ask-dedupe-mark">🏷 Mark Duplicates</button>
+      <button class="btn ghost sm" id="ask-dedupe-remove">🗑 Remove Duplicates</button>
+    </div>
+    <p class="muted" style="margin-bottom:10px">Uses your selected feature columns as the dedupe key. Instant — no Claude call.</p>
+
     <h4>Progress</h4>
     <div id="ask-steps"></div>
     <div id="ask-out"></div>
@@ -713,8 +774,100 @@ PANELS.ask = (el) => {
     $("ask-prev").innerHTML = `<div class="preview">${esc(p)}</div>`;
   };
   $("ask-run").onclick = runAsk;
+  $("ask-suggest-cols").onclick = suggestColumns;
+  $("ask-dedupe-mark").onclick = () => runDedupe(false);
+  $("ask-dedupe-remove").onclick = () => runDedupe(true);
   wireSaveBtn("Ask");
 };
+
+/* ─────────── AI column-name suggestion (1 Haiku call) ─────────── */
+async function suggestColumns() {
+  const q = $("ask-q").value.trim();
+  if (!q) { toast("Type your instruction first", "err"); return; }
+  if (!state.keys.anthropic) { toast("Anthropic key required", "err"); return; }
+  const btn = $("ask-suggest-cols");
+  const orig = btn.textContent;
+  btn.textContent = "… thinking";
+  btn.disabled = true;
+  try {
+    const text = await anthropicCall(
+      state.models.bulk,
+      "You plan column schemas for CSV enrichment. Given an instruction, output ONLY a comma-separated list of 1-6 short snake_case column names that together answer the instruction. No explanation, no quotes, no brackets, just: Name1, Name2, Name3",
+      `Instruction: ${q}\n\nProposed column names:`,
+      100
+    );
+    let cleaned = String(text).split("\n")[0].replace(/^[^A-Za-z_]+/, "").replace(/\.$/, "").trim();
+    if (/^[A-Za-z0-9_, ]+$/.test(cleaned)) {
+      $("ask-col").value = cleaned;
+      toast(`Suggested: ${cleaned}`, "ok");
+    } else {
+      $("ask-col").value = cleaned;
+      toast("Got odd response, used first line: " + cleaned.slice(0,60), "info");
+    }
+  } catch(e) {
+    toast("Suggest failed: " + e.message.slice(0,100), "err");
+  } finally {
+    btn.textContent = orig;
+    btn.disabled = false;
+  }
+}
+
+/* ─────────── Pure-JS duplicate finder (no API, no cost, instant) ─────────── */
+function runDedupe(removeMode) {
+  if (!state.data.rows.length) { toast("Load a dataset first", "err"); return; }
+  const feats = state.sel.features;
+  if (!feats.length) {
+    toast("Select at least one feature chip (e.g. Company + Name) to define a duplicate", "err");
+    return;
+  }
+  const colName = removeMode ? null : ($("ask-col").value.trim() || "Is_Duplicate");
+  const normalize = v => String(v==null?"":v).toLowerCase().trim().replace(/\s+/g," ");
+  const seen = new Map();
+  const groups = new Map();
+  state.data.rows.forEach((r, idx) => {
+    const key = feats.map(f => normalize(r[f])).join("||");
+    if (!seen.has(key)) seen.set(key, idx);
+    groups.set(key, (groups.get(key) || 0) + 1);
+  });
+
+  if (!removeMode) {
+    if (!state.data.cols.includes(colName)) state.data.cols.push(colName);
+    let uniqueCount = 0, dupeCount = 0;
+    state.data.rows.forEach((r, idx) => {
+      const key = feats.map(f => normalize(r[f])).join("||");
+      const count = groups.get(key);
+      const isFirst = seen.get(key) === idx;
+      r[colName] = (count > 1 && !isFirst) ? "Yes" : "No";
+      if (r[colName] === "Yes") dupeCount++; else uniqueCount++;
+    });
+    renderTable();
+    state.stageDone.add("ask");
+    toast(`Done · ${dupeCount} duplicates marked · ${uniqueCount} unique rows`, "ok");
+    $("ask-out").innerHTML = `<div class="card">
+      <div style="font-weight:600;margin-bottom:6px">✓ Dedupe complete</div>
+      <div>Based on: <b>${esc(feats.join(" + "))}</b></div>
+      <div>Column added: <code>${esc(colName)}</code></div>
+      <div style="margin-top:8px"><b>${dupeCount}</b> duplicate rows · <b>${uniqueCount}</b> unique · <b>${groups.size}</b> distinct combinations</div>
+    </div>`;
+  } else {
+    if (!confirm(`Remove ${state.data.rows.length - groups.size} duplicate rows? This keeps only the first occurrence of each ${feats.join(" + ")} combination.`)) return;
+    const kept = [];
+    state.data.rows.forEach((r, idx) => {
+      const key = feats.map(f => normalize(r[f])).join("||");
+      if (seen.get(key) === idx) kept.push(r);
+    });
+    const removed = state.data.rows.length - kept.length;
+    state.data.rows = kept;
+    renderTable();
+    state.stageDone.add("ask");
+    toast(`Removed ${removed} duplicate rows · ${kept.length} unique rows remain`, "ok");
+    $("ask-out").innerHTML = `<div class="card">
+      <div style="font-weight:600;margin-bottom:6px">✓ Duplicates removed</div>
+      <div>Based on: <b>${esc(feats.join(" + "))}</b></div>
+      <div style="margin-top:8px"><b>${removed}</b> rows removed · <b>${kept.length}</b> unique rows remain</div>
+    </div>`;
+  }
+}
 
 function buildAskPrompt(row, overrideQ) {
   const q = overrideQ != null ? overrideQ : $("ask-q").value.trim();

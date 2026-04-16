@@ -146,6 +146,57 @@ def detect_url_column(columns: list[str]) -> str | None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  NLP AUTO-ROUTING — decide if a question is per-row or list-level
+# ═══════════════════════════════════════════════════════════════════════════════
+async def _decide_mode_async(question: str, api_key: str, api: str = "anthropic") -> str:
+    """Single small API call → returns 'per_row' or 'list'. ~1s latency."""
+    sys_prompt = (
+        "Return exactly one word: PER_ROW if the instruction should be applied to "
+        "EACH row (classify, score, enrich, look up, summarize each), or LIST if it "
+        "should be applied ONCE over the whole dataset (hypothesis, overall insight, "
+        "schema, strategy)."
+    )
+    user = f"Instruction: {question}\n\nOne word answer: PER_ROW or LIST"
+    model = MODELS[api]
+    async with aiohttp.ClientSession() as session:
+        if api == "openai":
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            text = await call_openai(session, user, headers, model, sys_prompt, 15)
+        else:
+            headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
+            text = await call_anthropic(session, user, headers, model, sys_prompt, 15)
+    return "list" if "LIST" in text.upper() else "per_row"
+
+
+def decide_mode(question: str, api_key: str, api: str = "anthropic") -> str:
+    """Sync wrapper — returns 'per_row' or 'list'."""
+    return asyncio.run(_decide_mode_async(question, api_key, api))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  DEDUPE — pure-pandas, no API cost
+# ═══════════════════════════════════════════════════════════════════════════════
+def dedupe(df: pd.DataFrame, features: list, mode: str = "mark",
+           column: str = "Is_Duplicate") -> pd.DataFrame:
+    """
+    Find/remove duplicates using case-insensitive, whitespace-normalized match
+    on the concatenation of `features`.
+
+    mode='mark'   → adds column with "Yes"/"No" (first occurrence = "No")
+    mode='remove' → returns DataFrame with duplicates dropped (keeps first)
+    """
+    if df.empty or not features:
+        return df
+    norm = lambda v: str(v if v is not None else "").lower().strip()
+    key = df[features].astype(str).apply(lambda r: "||".join(norm(v) for v in r), axis=1)
+    if mode == "remove":
+        return df.loc[~key.duplicated(keep="first")].reset_index(drop=True)
+    out = df.copy()
+    out[column] = ["Yes" if d else "No" for d in key.duplicated(keep="first")]
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  PROMPT BUILDER
 # ═══════════════════════════════════════════════════════════════════════════════
 def build_prompt(row: dict, features: list[str], question: str, crawl_text: str = "") -> str:

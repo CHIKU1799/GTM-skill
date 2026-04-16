@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 import pandas as pd
 from scripts.gtm_enrich import (
-    normalize_url, detect_url_column, build_prompt, extract_text,
+    normalize_url, detect_url_column, build_prompt, extract_text, dedupe,
 )
 from scripts.enrich_column import build_row_prompt, dry_run
 
@@ -375,6 +375,47 @@ def test_cli_all_columns_missing_exits():
         capture_output=True, text=True
     )
     assert result.returncode != 0 or "No valid" in result.stderr or "ERROR" in result.stderr
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  DEDUPE (new feature)
+# ═══════════════════════════════════════════════════════════════════════════════
+def test_dedupe_mark_basic():
+    df = pd.DataFrame({"Name": ["Acme", "acme", "Beta", "ACME ", "Beta"]})
+    out = dedupe(df, ["Name"], mode="mark")
+    # Case-insensitive + whitespace-normalized: row 0 first, 1 dup, 2 first, 3 dup, 4 dup
+    assert out["Is_Duplicate"].tolist() == ["No", "Yes", "No", "Yes", "Yes"]
+
+def test_dedupe_remove_keeps_first():
+    df = pd.DataFrame({"Name": ["Acme", "acme", "Beta", "ACME", "Beta"]})
+    out = dedupe(df, ["Name"], mode="remove")
+    assert len(out) == 2
+    assert out["Name"].tolist() == ["Acme", "Beta"]  # first occurrence preserved
+
+def test_dedupe_multi_feature_key():
+    df = pd.DataFrame({
+        "Name":   ["Acme", "Acme", "Acme"],
+        "Domain": ["acme.com", "acme.io", "acme.com"],
+    })
+    out = dedupe(df, ["Name", "Domain"], mode="mark")
+    # Only (Acme, acme.com) repeats at row 2
+    assert out["Is_Duplicate"].tolist() == ["No", "No", "Yes"]
+
+def test_dedupe_empty_df_safe():
+    df = pd.DataFrame(columns=["Name"])
+    out = dedupe(df, ["Name"], mode="mark")
+    assert len(out) == 0
+
+def test_dedupe_no_features_returns_df_unchanged():
+    df = pd.DataFrame({"Name": ["Acme"]})
+    out = dedupe(df, [], mode="mark")
+    assert "Is_Duplicate" not in out.columns
+
+def test_dedupe_custom_column_name():
+    df = pd.DataFrame({"Name": ["a", "a", "b"]})
+    out = dedupe(df, ["Name"], mode="mark", column="Dupe_Flag")
+    assert "Dupe_Flag" in out.columns
+    assert out["Dupe_Flag"].tolist() == ["No", "Yes", "No"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
