@@ -203,20 +203,22 @@ async def call_anthropic(session, prompt, headers, model, sys_prompt, max_tok):
 
 async def _call_with_retry(caller, session, sem, idx, prompt, headers, model, sys_prompt, max_tok):
     for attempt in range(MAX_RETRIES):
-        async with sem:
-            try:
+        # Only hold the semaphore during the actual HTTP call, NOT during backoff sleep.
+        # Otherwise one rate-limited row blocks a concurrency slot while sleeping.
+        try:
+            async with sem:
                 result = await caller(session, prompt, headers, model, sys_prompt, max_tok)
-                return (idx, result)
-            except RuntimeError as e:
-                msg = str(e)
-                if "429" in msg or "529" in msg or "503" in msg:
-                    await asyncio.sleep(BACKOFF * 2**attempt)
-                    continue
-                return (idx, f"[ERROR] {msg[:100]}")
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(BACKOFF * 2**attempt); continue
-                return (idx, f"[ERROR] {str(e)[:100]}")
+            return (idx, result)
+        except RuntimeError as e:
+            msg = str(e)
+            if ("429" in msg or "529" in msg or "503" in msg) and attempt < MAX_RETRIES - 1:
+                await asyncio.sleep(BACKOFF * 2**attempt)
+                continue
+            return (idx, f"[ERROR] {msg[:100]}")
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            if attempt < MAX_RETRIES - 1:
+                await asyncio.sleep(BACKOFF * 2**attempt); continue
+            return (idx, f"[ERROR] {str(e)[:100]}")
     return (idx, "[ERROR] max retries")
 
 
@@ -318,8 +320,11 @@ def enrich(
                 bar.done_msg()
 
         # ── STEP 1: Build all prompts ──
-        prompts = [(idx, build_prompt(row.to_dict(), features, question, crawl_texts.get(idx, "")))
-                   for idx, row in df.iterrows()]
+        # Use to_dict('records') — 10-30x faster than iterrows() on large DataFrames.
+        # Reset index ensures crawl_texts positional alignment with records.
+        records = df.reset_index(drop=True).to_dict("records")
+        prompts = [(i, build_prompt(r, features, question, crawl_texts.get(i, "")))
+                   for i, r in enumerate(records)]
 
         # ── STEP 2: API calls ──
         if api == "openai":
@@ -344,7 +349,8 @@ def enrich(
 
         bar.done_msg()
 
-        df[column] = df.index.map(lambda i: results.get(i, "[ERROR:MISSING]"))
+        # Positional result assignment — faster than df.index.map(lambda).
+        df[column] = [results.get(i, "[ERROR:MISSING]") for i in range(len(df))]
         return df
 
     return asyncio.run(_go())

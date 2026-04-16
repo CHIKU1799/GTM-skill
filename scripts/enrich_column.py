@@ -157,9 +157,13 @@ async def _call_openai(
             {"role": "user",   "content": prompt},
         ],
     }
+    # Only hold the semaphore during the actual HTTP call — backoff sleeps MUST be
+    # outside the `async with sem` block or a single rate-limited row will occupy
+    # a concurrency slot while sleeping, starving every other in-flight row.
     for attempt in range(MAX_RETRIES):
-        async with sem:
-            try:
+        wait_s = None
+        try:
+            async with sem:
                 async with session.post(
                     OPENAI_URL, headers=headers, json=body,
                     timeout=aiohttp.ClientTimeout(total=TIMEOUT_SEC),
@@ -171,19 +175,18 @@ async def _call_openai(
                             return (row_idx, "[ERROR:EMPTY] No choices returned")
                         return (row_idx, choices[0]["message"]["content"].strip())
                     if r.status == 429:
-                        wait = float(r.headers.get("Retry-After", BACKOFF_BASE * 2**attempt))
-                        await asyncio.sleep(wait)
-                        continue
-                    if r.status >= 500:
-                        await asyncio.sleep(BACKOFF_BASE * 2**attempt)
-                        continue
-                    err = await r.text()
-                    return (row_idx, f"[ERROR:{r.status}] {err[:150]}")
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(BACKOFF_BASE * 2**attempt)
-                    continue
+                        wait_s = float(r.headers.get("Retry-After", BACKOFF_BASE * 2**attempt))
+                    elif r.status >= 500:
+                        wait_s = BACKOFF_BASE * 2**attempt
+                    else:
+                        err = await r.text()
+                        return (row_idx, f"[ERROR:{r.status}] {err[:150]}")
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            if attempt >= MAX_RETRIES - 1:
                 return (row_idx, f"[ERROR:TIMEOUT] {e!s:.100}")
+            wait_s = BACKOFF_BASE * 2**attempt
+        if wait_s is not None and attempt < MAX_RETRIES - 1:
+            await asyncio.sleep(wait_s)
     return (row_idx, "[ERROR] max retries exhausted")
 
 
@@ -205,9 +208,12 @@ async def _call_anthropic(
         "system": system_prompt,
         "messages": [{"role": "user", "content": prompt}],
     }
+    # Semaphore is only held during the HTTP call; backoff sleeps are outside it
+    # so rate-limited rows don't block other concurrent rows.
     for attempt in range(MAX_RETRIES):
-        async with sem:
-            try:
+        wait_s = None
+        try:
+            async with sem:
                 async with session.post(
                     ANTHROPIC_URL, headers=headers, json=body,
                     timeout=aiohttp.ClientTimeout(total=TIMEOUT_SEC),
@@ -219,15 +225,16 @@ async def _call_anthropic(
                             return (row_idx, "[ERROR:EMPTY] No content returned")
                         return (row_idx, content[0]["text"].strip())
                     if r.status == 429 or r.status >= 500:
-                        await asyncio.sleep(BACKOFF_BASE * 2**attempt)
-                        continue
-                    err = await r.text()
-                    return (row_idx, f"[ERROR:{r.status}] {err[:150]}")
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(BACKOFF_BASE * 2**attempt)
-                    continue
+                        wait_s = BACKOFF_BASE * 2**attempt
+                    else:
+                        err = await r.text()
+                        return (row_idx, f"[ERROR:{r.status}] {err[:150]}")
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            if attempt >= MAX_RETRIES - 1:
                 return (row_idx, f"[ERROR:TIMEOUT] {str(e)[:100]}")
+            wait_s = BACKOFF_BASE * 2**attempt
+        if wait_s is not None and attempt < MAX_RETRIES - 1:
+            await asyncio.sleep(wait_s)
     return (row_idx, "[ERROR] max retries exhausted")
 
 
@@ -304,9 +311,9 @@ async def _run_enrich(
     print(f"  Est. cost: ~${cost:.2f}\n", file=sys.stderr)
 
     # ── Pre-build all prompts (zero cost during async blast) ──
-    prompts = []
-    for idx, row in df.iterrows():
-        prompts.append((idx, build_row_prompt(row.to_dict(), features, question)))
+    # to_dict('records') is 10-30x faster than iterrows() on large DataFrames.
+    records = df.reset_index(drop=True).to_dict("records")
+    prompts = [(i, build_row_prompt(r, features, question)) for i, r in enumerate(records)]
 
     # ── Fire all requests ──
     if api == "anthropic":
@@ -334,7 +341,8 @@ async def _run_enrich(
     prog.summary()
 
     # ── Write column ──
-    df[new_column] = df.index.map(lambda i: results.get(i, "[ERROR:MISSING]"))
+    # Positional list assignment — faster than df.index.map(lambda).
+    df[new_column] = [results.get(i, "[ERROR:MISSING]") for i in range(len(df))]
     return df
 
 
