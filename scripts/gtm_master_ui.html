@@ -1168,13 +1168,13 @@ async function apolloPeople(company, domain, max, seniority) {
 
 async function apifyLinkedIn(url, max) {
   const actor = "george.the.developer~linkedin-company-employees-scraper";
-  return await apifyRun(actor, { companyUrls:[url], maxEmployees:max, outputType:"fullWithEmail" }, max);
+  return await apifyRun(actor, { companies:[url], maxEmployees:max, outputType:"fullWithEmail" }, max);
 }
 async function apifyLeadsFinder(name, domain, max) {
   const actor = "code_crafter~leads-finder";
-  return await apifyRun(actor, { company:name, domain:domain||"", limit:max }, max);
+  return await apifyRun(actor, { company:name, domain:domain||"", limit:max }, max, /*freeTierFallback*/true);
 }
-async function apifyRun(actor, input, max) {
+async function apifyRun(actor, input, max, freeTierFallback=false) {
   const token = state.keys.apify;
   const start = await fetch(`https://api.apify.com/v2/acts/${actor}/runs?token=${token}`, {
     method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(input)
@@ -1190,7 +1190,7 @@ async function apifyRun(actor, input, max) {
     const sj = await s.json();
     const st = sj.data.status;
     if (["FAILED","ABORTED","TIMED-OUT"].includes(st)) {
-      log(`Apify actor ${st}`, "err");
+      log(`Apify actor ${actor.split("~")[1]} ${st}`, "err");
       return [];
     }
     if (st === "SUCCEEDED") { succeeded = true; break; }
@@ -1200,8 +1200,13 @@ async function apifyRun(actor, input, max) {
     return [];
   }
   const items = await (await fetch(`https://api.apify.com/v2/datasets/${data.defaultDatasetId}/items?token=${token}&limit=${max}`)).json();
+  // Some actors return an error object on free tier instead of results
+  if (items.length === 1 && items[0].error) {
+    log(`Apify ${actor.split("~")[1]}: ${items[0].error}`, freeTierFallback ? "info" : "err");
+    return [];
+  }
   return items.slice(0,max).map(it => ({
-    name: it.fullName || it.name || `${it.first_name||""} ${it.last_name||""}`.trim(),
+    name: it.fullName || it.name || `${it.firstName||it.first_name||""} ${it.lastName||it.last_name||""}`.trim() || it.publicIdentifier || "",
     title: it.title || it.headline || it.jobTitle || it.job_title || "",
     linkedin_url: it.linkedInUrl || it.linkedinUrl || it.profileUrl || it.url || it.linkedin_url || it.linkedin || "",
     email: it.email || it.emailAddress || it.work_email || it.personal_email || "",
