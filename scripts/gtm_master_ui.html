@@ -223,7 +223,7 @@
 const LS = "gtm_master_v1";
 const state = {
   stage: "keys",
-  keys: { anthropic: "", apify: "", googleClientId: "" },
+  keys: { anthropic: "", apify: "", apollo: "", googleClientId: "" },
   models: { bulk: "claude-haiku-4-5-20251001", reasoning: "claude-sonnet-4-5-20250929" },
   data: { rows: [], cols: [], source: null, fileName: null, sheetId: null, sheetName: null },
   sel: { features: [], urlCol: null, linkedinCol: null, nameCol: null, domainCol: null },
@@ -418,6 +418,15 @@ PANELS.keys = (el) => {
       </div>
     </div>
     <div class="field">
+      <label>Apollo.io API Key <span class="pill ${state.keys.apollo?'ok':'optional'}">${state.keys.apollo?'set':'optional'}</span> <span class="muted" style="font-weight:normal">— people search by company/domain with seniority filter</span></label>
+      <input id="k-apollo" type="password" placeholder="xxxxxxxxxxxx..." value="${state.keys.apollo}"/>
+      <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+        <button class="btn sec sm" id="k-test-apollo">🧪 Test Key</button>
+        <span id="k-test-apollo-result" class="muted"></span>
+      </div>
+      <div class="muted" style="margin-top:4px">Get from apollo.io → Settings → Integrations → API. Search is free; email reveal costs credits.</div>
+    </div>
+    <div class="field">
       <label>Google OAuth Client ID <span class="pill ${state.keys.googleClientId?'ok':'warn'}">${state.keys.googleClientId?'set':'optional'}</span></label>
       <input id="k-gcid" type="text" placeholder="xxxxx.apps.googleusercontent.com" value="${state.keys.googleClientId}"/>
       <div class="muted" style="margin-top:4px">Create at console.cloud.google.com → APIs & Services → Credentials → OAuth client → Web application. Add <code>${location.origin || 'file://'}</code> as Authorized JS origin.</div>
@@ -495,11 +504,31 @@ PANELS.keys = (el) => {
       return { ok:true, sample: `user=${d.data?.username||"?"}` };
     }
   });
+  $("k-test-apollo").onclick = () => pingProvider({
+    resultEl: $("k-test-apollo-result"),
+    fetcher: async () => {
+      const key = $("k-apollo").value.trim();
+      if (!key) return { ok:false, statusText:"Paste a key first" };
+      const r = await fetch("https://api.apollo.io/v1/mixed_people/search", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json", "Cache-Control":"no-cache", "X-Api-Key": key },
+        body: JSON.stringify({ per_page: 1, page: 1 }),
+      });
+      if (r.status === 401 || r.status === 403) return { ok:false, statusText:`HTTP ${r.status} — key invalid` };
+      if (!r.ok) {
+        const t = (await r.text()).slice(0, 150);
+        return { ok:false, statusText:`HTTP ${r.status} ${t}` };
+      }
+      const d = await r.json();
+      return { ok:true, sample: `${d.pagination?.total_entries||0} total results available` };
+    }
+  });
 
   $("k-save").onclick = () => {
     const prevAnth = state.keys.anthropic;
     state.keys.anthropic = $("k-anth").value.trim();
     state.keys.apify = $("k-apify").value.trim();
+    state.keys.apollo = $("k-apollo").value.trim();
     state.keys.googleClientId = $("k-gcid").value.trim();
     state.models.bulk = $("k-bulk").value;
     state.models.reasoning = $("k-reason").value;
@@ -507,7 +536,7 @@ PANELS.keys = (el) => {
     state.stageDone.add("keys");
 
     // Visible feedback
-    toast(`Saved: ${state.keys.anthropic?'Anthropic ✓':''} ${state.keys.apify?'· Apify ✓':''} ${state.keys.googleClientId?'· Google ✓':''}`, "ok");
+    toast(`Saved: ${state.keys.anthropic?'Anthropic ✓':''} ${state.keys.apify?'· Apify ✓':''} ${state.keys.apollo?'· Apollo ✓':''} ${state.keys.googleClientId?'· Google ✓':''}`, "ok");
     $("k-saved-badge").style.display = "inline-flex";
     $("k-saved-inline").innerHTML = `<span class="pill ok">✓ Saved to browser · ${new Date().toLocaleTimeString()}</span>`;
     setStatus("Keys saved", "ok");
@@ -959,7 +988,21 @@ async function runAsk() {
       const ans = await anthropicCall(model, system, prompt, web ? 1024 : 300, tools);
       row[col] = ans;
       markCell(idx, col);
-    } catch(e) { row[col] = "[ERR] " + e.message.slice(0,80); }
+    } catch(e) {
+      // Try to extract the human message from an API error body like
+      //   HTTP 400 {"type":"error","error":{"type":"...","message":"..."}}
+      let msg = e.message || String(e);
+      try {
+        const m = msg.match(/\{[\s\S]*\}/);
+        if (m) {
+          const j = JSON.parse(m[0]);
+          const inner = j?.error?.message || j?.message;
+          if (inner) msg = `HTTP ${(msg.match(/HTTP\s+(\d+)/)||[])[1]||"?"} ${inner}`;
+        }
+      } catch(_) {}
+      row[col] = "[ERR] " + msg.slice(0, 400);
+      log(`#${idx+1} ${msg}`, "err");
+    }
     tickProg();
   });
   state.running = false;
@@ -973,12 +1016,25 @@ async function runAsk() {
 }
 
 
-/* ──────────── Stage: People (Apify) ──────────── */
+/* ──────────── Stage: People (Apify / Apollo) ──────────── */
 PANELS.people = (el) => {
   if (!state.data.rows.length) { el.innerHTML = '<p class="muted">Load a dataset first.</p>'; return; }
+  const hasApify  = !!state.keys.apify;
+  const hasApollo = !!state.keys.apollo;
   el.innerHTML = `
-    <h3>Find People (Apify)</h3>
-    <p class="muted">LinkedIn Company Employees Scraper + Leads Finder fallback. Writes <code>Person1..3_Name/Title/LinkedIn/Email/Phone</code>.</p>
+    <h3>Find People</h3>
+    <p class="muted">Writes <code>Person1..N_Name/Title/LinkedIn/Email/Phone</code>. Pick a provider below.</p>
+    <div class="field"><label>Provider</label>
+      <select id="pp-provider">
+        <option value="apify"  ${hasApify?'':'disabled'}>Apify — LinkedIn scraper + Leads Finder fallback (slower, ~30–90s/co)</option>
+        <option value="apollo" ${hasApollo?'':'disabled'}>Apollo — /v1/mixed_people/search (fast, free tier, seniority filter)</option>
+        <option value="cascade" ${(hasApify&&hasApollo)?'':'disabled'}>Apollo → Apify fallback (best coverage)</option>
+      </select>
+      <div class="muted" style="margin-top:4px">
+        ${hasApify?'':'<span class="pill err">Apify token missing</span> '}
+        ${hasApollo?'':'<span class="pill err">Apollo key missing</span>'}
+      </div>
+    </div>
     <div class="field"><label>LinkedIn URL column</label>
       <select id="pp-li">${state.data.cols.map(c=>`<option${c===state.sel.linkedinCol?' selected':''}>${c}</option>`).join('')}</select>
     </div>
@@ -992,15 +1048,19 @@ PANELS.people = (el) => {
       <div class="field"><label>Max people / company</label><input id="pp-max" type="number" value="3" min="1" max="10"/></div>
       <div class="field"><label>Parallel companies</label><input id="pp-conc" type="number" value="3" min="1" max="10"/></div>
     </div>
-    <div class="muted" style="margin-top:8px">⚠ Apify polling can take ~30–90s per company. Start small.</div>
+    <div class="field"><label>Apollo seniority filter (comma-separated; blank = any)</label>
+      <input id="pp-seniority" type="text" value="owner,founder,c_suite,partner,vp,head,director" placeholder="owner,founder,c_suite,..."/>
+    </div>
     <h4>Progress</h4>
     <div id="pp-steps"></div>
     ${actionBar({ startId:"pp-run", startLabel:"Start People Search" })}
   `;
+  // Default to Apollo when available (faster)
+  if (hasApollo) $("pp-provider").value = "apollo";
   renderSteps("pp-steps", [
-    { label:"Validate Apify token" },
+    { label:"Validate provider credentials" },
     { label:"Add person columns" },
-    { label:"Run Apify actors per company" },
+    { label:"Search per company" },
     { label:"Finalize" },
   ]);
   $("pp-run").onclick = runPeople;
@@ -1009,12 +1069,16 @@ PANELS.people = (el) => {
 
 async function runPeople() {
   if (state.running) { toast("A run is already in progress", "err"); return; }
-  if (!state.keys.apify) { toast("Apify token required", "err"); return; }
+  const provider = $("pp-provider").value;
+  if (provider === "apify" && !state.keys.apify) { toast("Apify token required", "err"); return; }
+  if (provider === "apollo" && !state.keys.apollo) { toast("Apollo key required", "err"); return; }
+  if (provider === "cascade" && (!state.keys.apollo || !state.keys.apify)) { toast("Cascade requires both Apollo key & Apify token", "err"); return; }
   updateStep("pp-steps", 0, "done");
-  toast("People search started", "info");
+  toast(`People search started (${provider})`, "info");
   const liCol = $("pp-li").value, nmCol = $("pp-name").value, dmCol = $("pp-dom").value;
   const maxP = parseInt($("pp-max").value)||3;
   const conc = parseInt($("pp-conc").value)||3;
+  const seniority = ($("pp-seniority").value||"").split(",").map(s=>s.trim()).filter(Boolean);
   const rows = state.data.rows;
   for (let i=1;i<=maxP;i++) for (const f of ["Name","Title","LinkedIn","Email","Phone"]) {
     const c = `Person${i}_${f}`;
@@ -1023,17 +1087,34 @@ async function runPeople() {
   renderTable();
   updateStep("pp-steps", 1, "done");
   updateStep("pp-steps", 2, "run");
-  showProg("Finding people via Apify…", rows.length);
+  showProg(`Finding people via ${provider}…`, rows.length);
   state.running = true;
   await pool(rows, conc, async (row, idx) => {
     if (!state.running) return;
     let liUrl = String(row[liCol]||"").trim();
     if (liUrl && !liUrl.startsWith("http")) liUrl = "https://"+liUrl;
     if (liUrl && !liUrl.includes("linkedin.com/")) liUrl = "";
+    const nm  = String(row[nmCol]||"").trim();
+    const dm  = String(row[dmCol]||"").trim();
     let people = [];
+    let src = "";
     try {
-      if (liUrl) people = await apifyLinkedIn(liUrl, maxP);
-      if (!people.length && row[nmCol]) people = await apifyLeadsFinder(row[nmCol], row[dmCol]||"", maxP);
+      if (provider === "apollo") {
+        people = await apolloPeople(nm, dm, maxP, seniority);
+        src = "apollo";
+      } else if (provider === "apify") {
+        if (liUrl) people = await apifyLinkedIn(liUrl, maxP);
+        if (!people.length && nm) people = await apifyLeadsFinder(nm, dm, maxP);
+        src = "apify";
+      } else { // cascade: apollo first, apify fallback
+        people = await apolloPeople(nm, dm, maxP, seniority);
+        src = "apollo";
+        if (!people.length) {
+          if (liUrl) people = await apifyLinkedIn(liUrl, maxP);
+          if (!people.length && nm) people = await apifyLeadsFinder(nm, dm, maxP);
+          if (people.length) src = "apify-fallback";
+        }
+      }
     } catch(e) { log(`#${idx+1} ${e.message}`, "err"); }
     people.slice(0,maxP).forEach((p,i) => {
       row[`Person${i+1}_Name`]=p.name||""; row[`Person${i+1}_Title`]=p.title||"";
@@ -1041,7 +1122,7 @@ async function runPeople() {
       row[`Person${i+1}_Phone`]=p.phone||"";
       markCell(idx, `Person${i+1}_Name`);
     });
-    log(`#${idx+1} ${row[nmCol]||''} → ${people.length} people`, people.length?"ok":"info");
+    log(`#${idx+1} ${nm} → ${people.length} people [${src}]`, people.length?"ok":"info");
     tickProg();
   });
   state.running = false;
@@ -1052,6 +1133,37 @@ async function runPeople() {
   hideProg();
   setStatus("People search done", "ok");
   toast(`Found people for ${rows.length} companies`, "ok");
+}
+
+/* Apollo.io: POST /v1/mixed_people/search
+   Free tier: search works, emails are redacted as "email_not_unlocked@domain.com".
+   Seniority values: owner, founder, c_suite, partner, vp, head, director, manager, senior, entry, intern. */
+async function apolloPeople(company, domain, max, seniority) {
+  const key = state.keys.apollo;
+  if (!key) return [];
+  const body = { per_page: Math.min(Math.max(max,1), 25), page: 1 };
+  if (company) body.q_organization_name = company;
+  if (domain)  body.q_organization_domains = domain;
+  if (seniority && seniority.length) body.person_seniorities = seniority;
+  const r = await fetch("https://api.apollo.io/v1/mixed_people/search", {
+    method:"POST",
+    headers:{ "Content-Type":"application/json", "Cache-Control":"no-cache", "X-Api-Key": key },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const t = (await r.text()).slice(0,200);
+    throw new Error(`apollo ${r.status} ${t}`);
+  }
+  const d = await r.json();
+  const list = Array.isArray(d.people) ? d.people : (Array.isArray(d.contacts) ? d.contacts : []);
+  return list.slice(0,max).map(p => ({
+    name: p.name || `${p.first_name||""} ${p.last_name||""}`.trim(),
+    title: p.title || p.headline || "",
+    linkedin_url: p.linkedin_url || "",
+    email: (p.email && !String(p.email).includes("email_not_unlocked")) ? p.email : "",
+    phone: (p.phone_numbers?.[0]?.sanitized_number) || p.phone || "",
+    location: [p.city, p.state, p.country].filter(Boolean).join(", "),
+  })).filter(p => p.name);
 }
 
 async function apifyLinkedIn(url, max) {
