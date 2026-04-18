@@ -220,6 +220,11 @@
 ═══════════════════════════════════════════════════════════════════ */
 
 /* ── State ─────────────────────────────────────────────────────── */
+// Apollo API needs a CORS proxy when running in the browser.
+// On Vercel the serverless /api/apollo proxy handles this; locally fall back to direct.
+const APOLLO_URL = location.hostname === "localhost" || location.protocol === "file:"
+  ? "https://api.apollo.io/v1/mixed_people/search"
+  : "/api/apollo";
 const LS = "gtm_master_v1";
 const state = {
   stage: "keys",
@@ -509,7 +514,7 @@ PANELS.keys = (el) => {
     fetcher: async () => {
       const key = $("k-apollo").value.trim();
       if (!key) return { ok:false, statusText:"Paste a key first" };
-      const r = await fetch("https://api.apollo.io/v1/mixed_people/search", {
+      const r = await fetch(APOLLO_URL, {
         method:"POST",
         headers:{ "Content-Type":"application/json", "Cache-Control":"no-cache", "X-Api-Key": key },
         body: JSON.stringify({ per_page: 1, page: 1 }),
@@ -1145,7 +1150,7 @@ async function apolloPeople(company, domain, max, seniority) {
   if (company) body.q_organization_name = company;
   if (domain)  body.q_organization_domains = domain;
   if (seniority && seniority.length) body.person_seniorities = seniority;
-  const r = await fetch("https://api.apollo.io/v1/mixed_people/search", {
+  const r = await fetch(APOLLO_URL, {
     method:"POST",
     headers:{ "Content-Type":"application/json", "Cache-Control":"no-cache", "X-Api-Key": key },
     body: JSON.stringify(body),
